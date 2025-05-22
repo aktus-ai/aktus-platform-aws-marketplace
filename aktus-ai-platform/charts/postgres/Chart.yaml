@@ -1,0 +1,6 @@
+# charts/aktus-postgres-service/Chart.yaml
+apiVersion: v2
+name: aktus-postgres-service
+description: PostgreSQL database for Aktus platform
+version: 1.0.0
+type: application

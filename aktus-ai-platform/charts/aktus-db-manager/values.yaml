@@ -1,0 +1,28 @@
+# aktus-gmp-db-manager/values.yaml
+aktusDatabase:
+  image: 539247452833.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-database:latest
+  imagePullPolicy: Always
+  port: 80
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+  dbConfig:
+    username: root
+    password: secret
+    host: aktus-postgres
+    port: 5432
+    dbName: root
+
+serviceAccount:
+  name: "aktus-ai-platform-sa"

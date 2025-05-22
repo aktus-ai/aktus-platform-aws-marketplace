@@ -1,0 +1,6 @@
+# charts/rabbitmq/Chart.yaml
+apiVersion: v2
+name: rabbitmq
+description: RabbitMQ service for Aktus platform
+version: 1.0.0
+type: application

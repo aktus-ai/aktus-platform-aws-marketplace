@@ -1,0 +1,39 @@
+# charts/aktus-postgres-service/values.yaml
+aktusPostgres:
+  image: postgres:13.16
+  username: root
+  password: secret
+  database: root
+  port: 5432
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClass: "gp3"
+    accessMode: "ReadWriteOnce"
+  efs:
+    fileSystemId: "fs-0c47b6858c6a3f483"
+  initScripts:
+    enabled: true
+    configMap: postgres-init
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "200m"
+      memory: "512Mi"
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+
+serviceAccount:
+  name: "aktus-ai-platform-sa"

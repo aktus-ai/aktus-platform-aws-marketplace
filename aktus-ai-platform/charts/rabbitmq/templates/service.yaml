@@ -1,0 +1,16 @@
+# charts/rabbitmq/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.rabbitmq.amqpPort }}
+      targetPort: amqp
+      name: amqp
+    - port: {{ .Values.rabbitmq.managementPort }}
+      targetPort: management
+      name: management
+  selector:
+    app: rabbitmq

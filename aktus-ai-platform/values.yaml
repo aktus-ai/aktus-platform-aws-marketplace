@@ -1,0 +1,30 @@
+# values.yaml
+aktus-postgres-service:
+  enabled: true
+
+rabbitmq:
+  enabled: true
+
+redis:
+  enabled: true
+
+qdrant:
+  enabled: true
+
+aktus-database-service:
+  enabled: true
+
+aktus-inference-service:
+  enabled: true
+
+aktus-research-service:
+  enabled: true
+
+aktus-multimodal-data-ingestion-service:
+  enabled: true
+
+aktus-embedding-service:
+  enabled: true
+
+aktus-knowledge-assistant-service:
+  enabled: true

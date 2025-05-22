@@ -1,0 +1,14 @@
+# charts/aktus-postgres-service/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-postgres-data
+  labels:
+    app: aktus-postgres-service
+spec:
+  accessModes:
+    - {{ .Values.aktusPostgres.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.aktusPostgres.persistence.size }}
+  storageClassName: {{ .Values.aktusPostgres.persistence.storageClass }}

@@ -1,0 +1,9 @@
+# charts/redis/values.yaml
+redis:
+  image: redis:7.4-alpine
+  port: 6379
+  persistence:
+    enabled: false
+    size: 20Gi
+    storageClassName: efs-sc
+    accessMode: ReadWriteMany
