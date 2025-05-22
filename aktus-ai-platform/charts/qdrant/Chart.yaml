@@ -1,0 +1,5 @@
+apiVersion: v2
+name: qdrant
+description: Qdrant vector search engine
+version: 1.0.0
+type: application 

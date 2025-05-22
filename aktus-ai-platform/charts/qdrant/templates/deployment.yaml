@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      serviceAccountName: {{ .Values.qdrant.serviceAccount }}
+      containers:
+        - name: qdrant
+          image: {{ .Values.qdrant.image }}
+          imagePullPolicy: {{ .Values.qdrant.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.qdrant.port }}
+              name: http
+          env:
+            - name: QDRANT_ALLOW_CROSS_ORIGIN
+              value: {{ .Values.qdrant.config.allowCrossOrigin | quote }}
+            - name: QDRANT_SERVICE_HOST
+              value: {{ .Values.qdrant.config.serviceHost | quote }}
+            - name: QDRANT_SERVICE_PORT
+              value: {{ .Values.qdrant.config.servicePort | quote }}
+            - name: QDRANT_STORAGE__SNAPSHOTS__INTERVAL_SEC
+              value: {{ .Values.qdrant.config.snapshotsIntervalSec | quote }}
+            - name: QDRANT_STORAGE__PERFORMANCE__MAX_OPTIMIZATION_THREADS
+              value: {{ .Values.qdrant.config.maxOptimizationThreads | quote }}
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+              subPath: {{ .Values.qdrant.persistence.subPath }}
+          resources:
+            {{- toYaml .Values.qdrant.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.qdrant.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.qdrant.livenessProbe.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.qdrant.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.qdrant.readinessProbe.periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: qdrant-storage
+          {{- if .Values.qdrant.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: qdrant-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

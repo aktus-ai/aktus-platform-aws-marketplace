@@ -1,0 +1,15 @@
+# charts/aktus-postgres-service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aktus-postgres
+  labels:
+    app: aktus-postgres-service
+spec:
+  ports:
+    - port: {{ .Values.aktusPostgres.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    app: aktus-postgres-service

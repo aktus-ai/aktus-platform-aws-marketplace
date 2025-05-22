@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-{{ .Chart.Name }}-efs-pv
+spec:
+  capacity:
+    storage: {{ .Values.rabbitmq.persistence.size }}
+  volumeMode: Filesystem
+  accessModes:
+    - {{ .Values.rabbitmq.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.rabbitmq.persistence.storageClassName }}
+  csi:
+    driver: efs.csi.aws.com
+    volumeHandle: {{ .Values.rabbitmq.efs.fileSystemId }}
+    {{- if .Values.rabbitmq.efs.basePath }}
+    volumeAttributes:
+      path: {{ .Values.rabbitmq.efs.basePath | quote }}
+    {{- end }} 

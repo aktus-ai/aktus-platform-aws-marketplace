@@ -1,0 +1,12 @@
+# aktus-inference-service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aktus-inference
+spec:
+  ports:
+    - port: {{ .Values.aktusInference.grpcPort }}
+      targetPort: grpc
+      name: grpc
+  selector:
+    app: aktus-inference-service

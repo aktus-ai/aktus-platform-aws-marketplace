@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-{{ .Chart.Name }}-efs-pvc
+spec:
+  accessModes:
+    - {{ .Values.rabbitmq.persistence.accessMode }}
+  storageClassName: {{ .Values.rabbitmq.persistence.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.rabbitmq.persistence.size }} 

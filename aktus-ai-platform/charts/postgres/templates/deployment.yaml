@@ -1,0 +1,93 @@
+# charts/postgres/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aktus-postgres
+  labels:
+    app: aktus-postgres-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aktus-postgres-service
+  template:
+    metadata:
+      labels:
+        app: aktus-postgres-service
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      tolerations:
+      - key: "CriticalAddonsOnly"
+        operator: "Exists"
+        effect: "NoSchedule"
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: {{ .Values.aktusPostgres.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.aktusPostgres.port }}
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.aktusPostgres.username | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.aktusPostgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.aktusPostgres.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.aktusPostgres.username | quote }}
+                - -d
+                - {{ .Values.aktusPostgres.database | quote }}
+            initialDelaySeconds: {{ .Values.aktusPostgres.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.aktusPostgres.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.aktusPostgres.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.aktusPostgres.livenessProbe.failureThreshold }}
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.aktusPostgres.username | quote }}
+                - -d
+                - {{ .Values.aktusPostgres.database | quote }}
+            initialDelaySeconds: {{ .Values.aktusPostgres.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.aktusPostgres.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.aktusPostgres.readinessProbe.timeoutSeconds }}
+          {{- if .Values.aktusPostgres.startupProbe }}
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.aktusPostgres.username | quote }}
+                - -d
+                - {{ .Values.aktusPostgres.database | quote }}
+            failureThreshold: {{ .Values.aktusPostgres.startupProbe.failureThreshold }}
+            periodSeconds: {{ .Values.aktusPostgres.startupProbe.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.aktusPostgres.resources | nindent 12 }}
+      volumes:
+        - name: postgres-data
+          {{- if .Values.aktusPostgres.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-postgres-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: init-scripts
+          configMap:
+            name: {{ .Values.aktusPostgres.initScripts.configMap }}

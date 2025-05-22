@@ -1,0 +1,35 @@
+qdrant:
+  image: qdrant/qdrant:v1.13.1
+  imagePullPolicy: Always
+  port: 6333
+  serviceAccount: aktus-ai-platform-sa
+  service:
+    type: ClusterIP
+    port: 6333
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClass: "gp3"
+    accessMode: "ReadWriteOnce"
+    subPath: "qdrant-data"
+  efs:
+    fileSystemId: "fs-0c47b6858c6a3f483"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  config:
+    allowCrossOrigin: true
+    serviceHost: "0.0.0.0"
+    servicePort: 6333
+    snapshotsIntervalSec: 300
+    maxOptimizationThreads: 2 

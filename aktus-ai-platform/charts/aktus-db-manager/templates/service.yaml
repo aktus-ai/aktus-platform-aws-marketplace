@@ -1,0 +1,13 @@
+# charts/aktus-gmp-db-manager/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aktus-database
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.aktusDatabase.port }}
+      targetPort: http
+      name: http
+  selector:
+    app: aktus-database-service

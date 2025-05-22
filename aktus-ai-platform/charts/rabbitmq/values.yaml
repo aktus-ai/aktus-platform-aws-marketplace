@@ -1,0 +1,16 @@
+# charts/rabbitmq/values.yaml
+rabbitmq:
+  image: rabbitmq:3-management-alpine
+  username: guest
+  password: guest
+  managementPort: 15672
+  amqpPort: 5672
+  definitions:
+    enabled: true
+    configMap: rabbitmq-definitions
+  persistence:
+    storageClassName: efs-sc
+    accessMode: ReadWriteMany
+    size: 5Gi
+  efs:
+    fileSystemId: "fs-0c47b6858c6a3f483"
