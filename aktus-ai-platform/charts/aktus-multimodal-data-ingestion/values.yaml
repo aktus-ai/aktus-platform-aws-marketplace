@@ -1,6 +1,6 @@
 # aktus-multimodal-data-ingestion-service/values.yaml
 aktusMdi:
-  image: 539247452833.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-mdi:latest
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:mdi-1.0.0
   imagePullPolicy: Always
   platform: linux/amd64
   serviceAccount: aktus-ai-platform-sa

@@ -1,6 +1,6 @@
 # service-model-inference/values.yaml
 aktusInference:
-  image: 539247452833.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-inference:latest 
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:inference-1.0.0
   nodeSelector: {}
   affinity:
     nodeAffinity:
