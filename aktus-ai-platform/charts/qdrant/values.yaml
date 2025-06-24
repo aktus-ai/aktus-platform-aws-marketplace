@@ -13,7 +13,7 @@ qdrant:
     accessMode: "ReadWriteOnce"
     subPath: "qdrant-data"
   efs:
-    fileSystemId: "fs-0c47b6858c6a3f483"
+    fileSystemId: "fs-0d4f6da8071634ae0"
   resources:
     requests:
       cpu: "250m"
