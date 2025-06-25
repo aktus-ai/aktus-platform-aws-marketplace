@@ -6,9 +6,11 @@ aktusKnowledgeAssistant:
     type: ClusterIP
     port: 8080
   
-  viteSocketUrl: "ws://aktus-research:8080/chat/copilot"
+  viteSocketUrl: "ws://aktus-research:8080/chat"
   viteApiBaseUrl: "http://aktus-db-manager:80"
   viteWaitlistFormId: "c989a45ed2991b0cb7455a37ced244f0"
+  viteLeaseApiBaseUrl: "http://aktus-research:8080"
+  viteApiEmbedUrl: "http://aktus-embedding:8080"
 
   resources:
     requests:
