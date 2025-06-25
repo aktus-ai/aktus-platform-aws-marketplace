@@ -4,9 +4,9 @@ kind: Service
 metadata:
   name: aktus-database
 spec:
-  type: ClusterIP
+  type: {{ .Values.aktusDatabase.service.type }}
   ports:
-    - port: {{ .Values.aktusDatabase.port }}
+    - port: {{ .Values.aktusDatabase.service.port }}
       targetPort: http
       name: http
   selector:
