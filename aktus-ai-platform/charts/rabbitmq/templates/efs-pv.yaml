@@ -1,3 +1,4 @@
+{{- if .Values.rabbitmq.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -16,4 +17,5 @@ spec:
     {{- if .Values.rabbitmq.efs.basePath }}
     volumeAttributes:
       path: {{ .Values.rabbitmq.efs.basePath | quote }}
-    {{- end }} 
+    {{- end }}
+{{- end }} 

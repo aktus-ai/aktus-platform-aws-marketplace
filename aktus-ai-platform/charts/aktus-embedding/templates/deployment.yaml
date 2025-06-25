@@ -64,6 +64,12 @@ spec:
               value: "dev"
             - name: AWS_STS_REGIONAL_ENDPOINTS
               value: "regional"
+            - name: COMMUNITY_REPORT_GRAPH_PROMPT_PATH
+              value: /app/graph/prompts/community_report_graph.txt
+            - name: EXTRACT_CLAIMS_PROMPT_PATH
+              value: /app/graph/prompts/extract_claims.txt
+            - name: PROJECT_ROOT_PATH
+              value: /graphrag_data
           volumeMounts:
             - name: efs-data
               mountPath: {{ .Values.aktusEmbedding.paths.extractedData }}

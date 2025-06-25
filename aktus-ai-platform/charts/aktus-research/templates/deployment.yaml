@@ -68,6 +68,10 @@ spec:
               value: abstract
             - name: LEASE_DATA_CASHFLOW_FOLDER
               value: cashflow
+            - name: ITERDRAG_ENDPOINT
+              value: http://aktus-embedding:8080/iterdrag/
+            - name: GRAPHRAG_ENDPOINT
+              value: http://aktus-embedding:8080/graphrag/search
           volumeMounts:
             - name: efs-data
               mountPath: {{ .Values.aktusResearch.paths.docUpload }}

@@ -3,6 +3,9 @@ aktusDatabase:
   image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:database-1.0.0
   imagePullPolicy: Always
   port: 80
+  service:
+    type: ClusterIP
+    port: 80
   resources:
     requests:
       cpu: "500m"

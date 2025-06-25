@@ -36,5 +36,9 @@ spec:
               value: "{{ .Values.aktusKnowledgeAssistant.viteApiBaseUrl }}"
             - name: VITE_WAITLIST_FORM_ID
               value: "{{ .Values.aktusKnowledgeAssistant.viteWaitlistFormId }}"
+            - name: VITE_LEASE_API_BASE_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteLeaseApiBaseUrl }}"
+            - name: VITE_API_EMBED_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteApiEmbedUrl }}"
           resources:
             {{- toYaml .Values.aktusKnowledgeAssistant.resources | nindent 12 }}

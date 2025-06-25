@@ -55,7 +55,9 @@ spec:
             - name: REDIS_BACKEND_URI
               value: "redis://{{ .Values.aktusMdi.redis.host }}/0"
             - name: VDB_ENDPOINT
-              value: "http://{{ .Values.aktusMdi.vectorEmbedding.host }}/vectorindex/embed"
+              value: "http://{{ .Values.aktusMdi.vectorEmbedding.host }}/vectorindex/embed_data"
+            - name: VDB_GRAPHRAG_INDEXING_ENDPOINT
+              value: "http://aktus-embedding:8080/vectorindex/index_graphrag"
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
