@@ -5,8 +5,12 @@ metadata:
   name: aktus-multimodal-data-ingestion
   labels:
     app: aktus-multimodal-data-ingestion-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   ports:
     - port: {{ .Values.aktusMdi.ports.flower }}
       targetPort: flower

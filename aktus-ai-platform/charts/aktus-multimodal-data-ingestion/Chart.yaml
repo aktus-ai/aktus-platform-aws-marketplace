@@ -1,6 +1,5 @@
-# aktus-multimodal-data-ingestion-service/Chart.yaml
 apiVersion: v2
-name: aktus-multimodal-data-ingestion-service
 description: Multimodal Data Ingestion Service for Aktus platform
-version: 1.0.0
+name: aktus-multimodal-data-ingestion-service
 type: application
+version: 1.0.0

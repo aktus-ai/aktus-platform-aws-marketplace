@@ -1,6 +1,6 @@
 # aktus-multimodal-data-ingestion-service/values.yaml
 aktusMdi:
-  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:mdi-1.0.0
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:mdi-latest
   imagePullPolicy: Always
   platform: linux/amd64
   serviceAccount: aktus-ai-platform-sa
@@ -27,7 +27,7 @@ aktusMdi:
     extractedData: "/extracted_data"
     models: "/models"
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"
   
   resources:
     requests:
