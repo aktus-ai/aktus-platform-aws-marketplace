@@ -1,0 +1,17 @@
+{{- if .Values.aktusPostgres.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-postgres-gp2-pv
+spec:
+  capacity:
+    storage: {{ .Values.aktusPostgres.persistence.size }}
+  volumeMode: Filesystem
+  accessModes:
+    - {{ .Values.aktusPostgres.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.aktusPostgres.persistence.storageClass }}
+  hostPath:
+    path: /tmp/postgres-data
+    type: DirectoryOrCreate
+{{- end }} 

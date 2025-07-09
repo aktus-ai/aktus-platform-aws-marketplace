@@ -1,6 +1,0 @@
-# aktus-embedding-service/Chart.yaml
-apiVersion: v2
-name: aktus-embedding-service
-description: Embedding Service for Aktus platform
-version: 1.0.0
-type: application

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aktus-knowledge-assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aktus-knowledge-assistant-service
+  template:
+    metadata:
+      labels:
+        app: aktus-knowledge-assistant-service
+    spec:
+      terminationGracePeriodSeconds: 60
+      
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: aktus-knowledge-assistant-service
+          image: {{ .Values.aktusKnowledgeAssistant.image }}
+          imagePullPolicy: {{ .Values.aktusKnowledgeAssistant.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.aktusKnowledgeAssistant.port }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          env:
+            - name: VITE_SOCKET_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteSocketUrl }}"
+            - name: VITE_API_BASE_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteApiBaseUrl }}"
+            - name: VITE_WAITLIST_FORM_ID
+              value: "{{ .Values.aktusKnowledgeAssistant.viteWaitlistFormId }}"
+            - name: VITE_LEASE_API_BASE_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteLeaseApiBaseUrl }}"
+            - name: VITE_API_EMBED_URL
+              value: "{{ .Values.aktusKnowledgeAssistant.viteApiEmbedUrl }}"
+          resources:
+            {{- toYaml .Values.aktusKnowledgeAssistant.resources | nindent 12 }}

@@ -1,0 +1,17 @@
+# aktus-embedding-service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aktus-embedding
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+spec:
+  type: LoadBalancer
+  ports:
+    - port: {{ .Values.aktusEmbedding.port }}
+      targetPort: http
+      name: http
+  selector:
+    app: aktus-embedding-service

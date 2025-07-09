@@ -1,0 +1,5 @@
+apiVersion: v2
+description: Database Manager Service for Aktus platform
+name: aktus-database-service
+type: application
+version: 1.0.0

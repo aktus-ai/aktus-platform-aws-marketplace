@@ -7,20 +7,18 @@ qdrant:
     type: ClusterIP
     port: 6333
   persistence:
-    enabled: false
-    size: 5Gi
-    storageClass: "gp3"
+    enabled: true
+    size: 500Gi
+    storageClass: "gp2"
     accessMode: "ReadWriteOnce"
     subPath: "qdrant-data"
-  efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
   resources:
     requests:
-      cpu: "250m"
-      memory: "512Mi"
-    limits:
       cpu: "500m"
       memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
   livenessProbe:
     initialDelaySeconds: 30
     periodSeconds: 10

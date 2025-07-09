@@ -1,0 +1,51 @@
+aktusResearch:
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:research-latest
+  imagePullPolicy: Always
+  port: 8080
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 
+  
+  auth:
+    username: "guest"
+    password: "guest"
+  
+  uvicorn:
+    host: "0.0.0.0"
+    port: "8080"
+    logLevel: "debug"
+    timeoutKeepAlive: "3600"
+  
+  anyscale:
+    apiBase: "https://api.endpoints.anyscale.com/v1"
+  
+  modelInference:
+    address: ""
+  embeddingService:
+    host: "aktus-embedding:8080"
+  
+  paths:
+    docUpload: "/document_upload"
+    docImage: "/doc_processing" 
+    extractedData: "/extracted_data"
+  
+  efs:
+    fileSystemId: "fs-placeholder"
+  
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "4Gi"
+    limits:
+      cpu: "2000m" 
+      memory: "8Gi"
+
+healthcheck:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 60
+  failureThreshold: 20
+
+serviceAccount:
+  name: "aktus-ai-platform-sa"

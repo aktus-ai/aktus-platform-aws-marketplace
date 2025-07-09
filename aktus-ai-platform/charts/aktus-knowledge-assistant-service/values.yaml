@@ -1,0 +1,24 @@
+aktusKnowledgeAssistant:
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:client-latest
+  imagePullPolicy: Always
+  port: 80
+  service:
+    type: LoadBalancer
+    port: 8080
+  
+  viteSocketUrl: "ws://aktus-research.aktusaidev.us-east-1.int.fti-cloud.com:81/chat"
+  viteApiBaseUrl: "http://aktus-research.aktusaidev.us-east-1.int.fti-cloud.com:81/db-manager"
+  viteWaitlistFormId: "c989a45ed2991b0cb7455a37ced244f0"
+  viteLeaseApiBaseUrl: "http://aktus-research.aktusaidev.us-east-1.int.fti-cloud.com:81"
+  viteApiEmbedUrl: "http://aktus-research.aktusaidev.us-east-1.int.fti-cloud.com:81/embeddings"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m" 
+      memory: "1Gi"
+
+serviceAccount:
+  name: "aktus-ai-platform-sa"

@@ -1,0 +1,42 @@
+# service-model-inference/values.yaml
+aktusInference:
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:inference-latest
+  affinity: {}
+  imagePullPolicy: Always
+  grpcPort: 50051
+  serviceAccount: 
+    name: aktus-ai-platform-sa
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::539247452833:role/AktusS3AccessRole"
+  
+  modelConfig:
+    minicpm:
+      baseModelPath: /models/minicpm/production/
+      peftModelPath: /models/minicpm/production/
+      processorPath: /models/minicpm/production/
+    yolo:
+      modelPath: /models/yolo/roboflow_yolo-v1/roboflow_yolo_weights_v1.pt
+
+  serverConfig:
+    uri: "[::]:50051"
+    enableFlashAttention: 0
+    hfLocalFilesOnly: 1
+    defaultDevice: "cuda"
+  
+  paths:
+    docUpload: /document_upload
+    docProcessing: /doc_processing
+  
+  efs:
+    fileSystemId: "fs-placeholder"
+
+  resources:
+    requests:
+      cpu: "2000m"
+      memory: "4Gi"
+      nvidia.com/gpu: 1
+    limits:
+      cpu: "10000m"
+      memory: "72Gi"
+      nvidia.com/gpu: 1
+

@@ -1,7 +1,0 @@
-# aktus-research-service/Chart.yaml
-apiVersion: v2
-name: aktus-research-service
-description: A Helm chart for Research Service
-type: application
-version: 1.0.0
-appVersion: "1.0.0"

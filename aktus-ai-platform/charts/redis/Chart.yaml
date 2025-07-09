@@ -1,6 +1,5 @@
-# charts/redis/Chart.yaml
 apiVersion: v2
-name: redis
 description: Redis service for Aktus platform
-version: 1.0.0
+name: redis
 type: application
+version: 1.0.0

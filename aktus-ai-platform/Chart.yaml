@@ -1,91 +1,50 @@
-# Chart.yaml
 apiVersion: v2
-name: aktus-platform
-description: Umbrella chart for Aktus AI platform
-version: 1.0.0
-type: application
-
 dependencies:
-
-  # Databases and Message Queues (Level 1)
-  - name: aktus-postgres-service
-    version: "1.0.0"
-    repository: "file://./charts/postgres"
-    tags:
-      - infrastructure
-    weight: 5
-
-  - name: rabbitmq
-    version: "1.0.0"
-    repository: "file://./charts/rabbitmq"
-    tags:
-      - infrastructure
-    weight: 5
-
-  - name: redis
-    version: "1.0.0"
-    repository: "file://./charts/redis"
-    tags:
-      - infrastructure
-    weight: 5
-
-  - name: qdrant
-    version: "1.0.0"
-    repository: "file://./charts/qdrant"
-    tags:
-      - infrastructure
-    weight: 5
-
-  # Core Services (Level 2)
-  - name: aktus-database-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-db-manager"
-    condition: aktus-database-service.enabled
-    dependencies:
-      - name: aktus-postgres-service
-        version: "1.0.0"
-    weight: 10
-
-  - name: aktus-inference-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-inference"
-    condition: aktus-inference-service.enabled
-    weight: 10
-
-  # Application Services (Level 3)
-  - name: aktus-research-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-research"
-    condition: aktus-research-service.enabled
-    dependencies:
-      - name: aktus-inference-service
-        version: "1.0.0"
-    weight: 15
-
-  - name: aktus-multimodal-data-ingestion-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-multimodal-data-ingestion"
-    condition: aktus-multimodal-data-ingestion-service.enabled
-    dependencies:
-      - name: rabbitmq
-        version: "1.0.0"
-      - name: redis
-        version: "1.0.0"
-    weight: 15
-
-  - name: aktus-embedding-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-embedding"
-    condition: aktus-embedding-service.enabled
-    dependencies:
-      - name: aktus-multimodal-data-ingestion-service
-        version: "1.0.0"
-      - name: qdrant
-        version: "1.0.0"
-    weight: 20
-
-  - name: aktus-knowledge-assistant-service
-    version: "1.0.0"
-    repository: "file://./charts/aktus-knowledge-assistant"
-    condition: aktus-knowledge-assistant.enabled
-    weight: 25
+- name: aktus-postgres-service
+  repository: file://./charts/aktus-postgres-service
+  tags:
+  - infrastructure
+  version: 1.0.0
+- name: rabbitmq
+  repository: file://./charts/rabbitmq
+  tags:
+  - infrastructure
+  version: 1.0.0
+- name: redis
+  repository: file://./charts/redis
+  tags:
+  - infrastructure
+  version: 1.0.0
+- name: qdrant
+  repository: file://./charts/qdrant
+  tags:
+  - infrastructure
+  version: 1.0.0
+- condition: aktus-database-service.enabled
+  name: aktus-database-service
+  repository: file://./charts/aktus-database-service
+  version: 1.0.0
+- condition: aktus-inference-service.enabled
+  name: aktus-inference-service
+  repository: file://./charts/aktus-inference-service
+  version: 1.0.0
+- condition: aktus-research-service.enabled
+  name: aktus-research-service
+  repository: file://./charts/aktus-research-service
+  version: 1.0.0
+- condition: aktus-multimodal-data-ingestion-service.enabled
+  name: aktus-multimodal-data-ingestion-service
+  repository: file://./charts/aktus-multimodal-data-ingestion-service
+  version: 1.0.0
+- condition: aktus-embedding-service.enabled
+  name: aktus-embedding-service
+  repository: file://./charts/aktus-embedding-service
+  version: 1.0.0
+- condition: aktus-knowledge-assistant.enabled
+  name: aktus-knowledge-assistant-service
+  repository: file://./charts/aktus-knowledge-assistant-service
+  version: 1.0.0
+description: Umbrella chart for Aktus AI platform
+name: aktus-platform
+type: application
+version: 1.0.0

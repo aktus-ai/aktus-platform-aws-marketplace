@@ -1,0 +1,17 @@
+{{- if .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-redis-gp2-pv
+spec:
+  capacity:
+    storage: {{ .Values.redis.persistence.size }}
+  volumeMode: Filesystem
+  accessModes:
+    - {{ .Values.redis.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.redis.persistence.storageClassName }}
+  hostPath:
+    path: /tmp/redis-data
+    type: DirectoryOrCreate
+{{- end }} 

@@ -5,12 +5,15 @@ rabbitmq:
   password: guest
   managementPort: 15672
   amqpPort: 5672
+  service:
+    type: ClusterIP
   definitions:
     enabled: true
     configMap: rabbitmq-definitions
   persistence:
-    storageClassName: efs-sc
-    accessMode: ReadWriteMany
-    size: 5Gi
+    enabled: true
+    storageClassName: gp2
+    accessMode: ReadWriteOnce
+    size: 50Gi
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"

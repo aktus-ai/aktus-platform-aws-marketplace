@@ -1,0 +1,13 @@
+{{- if not (lookup "storage.k8s.io/v1" "StorageClass" "" "efs-sc") }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-sc
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: fs-placeholder
+  directoryPerms: "700"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+{{- end }}

@@ -1,0 +1,25 @@
+# aktus-multimodal-data-ingestion-service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aktus-multimodal-data-ingestion
+  labels:
+    app: aktus-multimodal-data-ingestion-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+spec:
+  type: LoadBalancer
+  ports:
+    - port: {{ .Values.aktusMdi.ports.flower }}
+      targetPort: flower
+      name: flower
+    - port: {{ .Values.aktusMdi.ports.ocr }}
+      targetPort: ocr
+      name: ocr
+    - port: {{ .Values.aktusMdi.ports.layout }}
+      targetPort: layout
+      name: layout
+  selector:
+    app: aktus-multimodal-data-ingestion-service

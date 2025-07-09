@@ -3,7 +3,7 @@ redis:
   image: redis:7.4-alpine
   port: 6379
   persistence:
-    enabled: false
-    size: 20Gi
-    storageClassName: efs-sc
-    accessMode: ReadWriteMany
+    enabled: true
+    size: 50Gi
+    storageClassName: gp2
+    accessMode: ReadWriteOnce

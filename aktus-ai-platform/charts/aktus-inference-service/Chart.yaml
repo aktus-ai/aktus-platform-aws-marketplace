@@ -1,0 +1,5 @@
+apiVersion: v2
+description: Model Inference Service for Aktus platform
+name: aktus-inference-service
+type: application
+version: 1.0.0

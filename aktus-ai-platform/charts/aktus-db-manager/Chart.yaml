@@ -1,6 +1,0 @@
-# charts/aktus-gmp-db-manager/Chart.yaml
-apiVersion: v2
-name: aktus-database-service
-description: Database Manager Service for Aktus platform
-version: 1.0.0
-type: application
