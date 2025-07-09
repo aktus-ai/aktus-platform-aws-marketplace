@@ -1,7 +1,6 @@
-# carts/aktus-knowledge-assistant/Chart.yaml
 apiVersion: v2
-name: aktus-knowledge-assistant-service
+appVersion: 1.0.0
 description: A Helm chart for Knowledge Assistant Service
+name: aktus-knowledge-assistant-service
 type: application
 version: 1.0.0
-appVersion: "1.0.0"
