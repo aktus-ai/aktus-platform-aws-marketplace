@@ -55,7 +55,7 @@ spec:
             - name: AWS_STS_REGIONAL_ENDPOINTS
               value: "regional"
             - name: GRAPHRAG_ENDPOINT
-              value: http://aktus-embedding:8080/graphrag/search
+              value: http://{{ .Values.aktusResearch.embeddingService.host }}/graphrag/search
             - name: ENV
               value: "dev"
             - name: CONTEXT_PATH
@@ -68,6 +68,12 @@ spec:
               value: abstract
             - name: LEASE_DATA_CASHFLOW_FOLDER
               value: cashflow
+            - name: VDB_ENDPOINT
+              value: "http://aktus-embedding:8080"
+            - name: DB_MANAGER_ENDPOINT
+              value: http://aktus-database
+            - name: REDIS_BACKEND_URI
+              value: redis
           volumeMounts:
             - name: efs-data
               mountPath: {{ .Values.aktusResearch.paths.docUpload }}

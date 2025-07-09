@@ -1,10 +1,11 @@
 aktusResearch:
-  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:research-1.0.0
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:research-latest
   imagePullPolicy: Always
   port: 8080
   service:
-    type: ClusterIP
+    type: NodePort
     port: 8080
+    nodePort: 
   
   auth:
     username: "guest"
@@ -21,7 +22,6 @@ aktusResearch:
   
   modelInference:
     address: ""
-  
   embeddingService:
     host: "aktus-embedding:8080"
   
@@ -31,7 +31,7 @@ aktusResearch:
     extractedData: "/extracted_data"
   
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"
   
   resources:
     requests:

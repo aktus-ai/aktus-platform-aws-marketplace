@@ -2,14 +2,20 @@ apiVersion: v1
 kind: Service
 metadata:
   name: aktus-research
-  labels:
-    app: aktus-research-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
 spec:
-  type: {{ .Values.aktusResearch.service.type }}
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
   ports:
-    - port: {{ .Values.aktusResearch.service.port }}
-      targetPort: http
-      protocol: TCP
-      name: http
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
   selector:
     app: aktus-research-service
+  type: LoadBalancer
