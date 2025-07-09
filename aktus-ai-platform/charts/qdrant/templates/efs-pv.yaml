@@ -1,15 +1,17 @@
+{{- if .Values.qdrant.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: "{{ .Release.Name }}-qdrant-efs-pv"
+  name: {{ .Release.Name }}-qdrant-gp2-pv
 spec:
   capacity:
-    storage: "{{ .Values.qdrant.persistence.size }}"
+    storage: {{ .Values.qdrant.persistence.size }}
   volumeMode: Filesystem
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.qdrant.persistence.accessMode }}
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: efs-sc
-  csi:
-    driver: efs.csi.aws.com
-    volumeHandle: "{{ .Values.qdrant.efs.fileSystemId }}" 
+  storageClassName: {{ .Values.qdrant.persistence.storageClass }}
+  hostPath:
+    path: /tmp/qdrant-data
+    type: DirectoryOrCreate
+{{- end }} 
