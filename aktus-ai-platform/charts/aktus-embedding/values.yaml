@@ -1,6 +1,6 @@
 # aktus-embedding-service/values.yaml
 aktusEmbedding:
-  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:embedding-1.0.1
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:embedding-latest
   imagePullPolicy: Always
   serviceAccount: aktus-ai-platform-sa
   port: 8080
@@ -22,7 +22,7 @@ aktusEmbedding:
     docProcessing: "/doc_processing"
     
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"
     
   resources:
     requests:
