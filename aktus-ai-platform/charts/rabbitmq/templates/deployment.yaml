@@ -59,8 +59,13 @@ spec:
             periodSeconds: 5
       volumes:
         - name: rabbitmq-data
+          {{- if .Values.rabbitmq.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-{{ .Chart.Name }}-efs-pvc
+            claimName: {{ .Release.Name }}-{{ .Chart.Name }}-pvc
+          {{- else }}
+          emptyDir:
+            sizeLimit: 5Gi
+          {{- end }}
         - name: rabbitmq-config
           configMap:
             name: {{ .Release.Name }}-rabbitmq-config
