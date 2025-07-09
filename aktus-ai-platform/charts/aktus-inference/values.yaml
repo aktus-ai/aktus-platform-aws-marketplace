@@ -1,16 +1,7 @@
 # service-model-inference/values.yaml
 aktusInference:
-  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:inference-1.0.0
-  nodeSelector: {}
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: karpenter.sh/nodepool
-            operator: In
-            values:
-            - gpu-nodes
+  image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr:inference-latest
+  affinity: {}
   imagePullPolicy: Always
   grpcPort: 50051
   serviceAccount: 
@@ -33,12 +24,11 @@ aktusInference:
     defaultDevice: "cuda"
   
   paths:
-    models: /models
     docUpload: /document_upload
     docProcessing: /doc_processing
   
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"
 
   resources:
     requests:
@@ -49,3 +39,4 @@ aktusInference:
       cpu: "10000m"
       memory: "72Gi"
       nvidia.com/gpu: 1
+

@@ -16,10 +16,6 @@ spec:
         app: aktus-inference-service
     spec:
       serviceAccountName: {{ .Values.aktusInference.serviceAccount.name }}
-      {{- with .Values.aktusInference.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       {{- with .Values.aktusInference.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
@@ -71,9 +67,6 @@ spec:
             - name: GRPC_VERBOSITY
               value: "DEBUG"
           volumeMounts:
-            - name: efs-data
-              mountPath: {{ .Values.aktusInference.paths.models }}
-              subPath: models
             - name: efs-data
               mountPath: {{ .Values.aktusInference.paths.docUpload }}
               subPath: document_upload

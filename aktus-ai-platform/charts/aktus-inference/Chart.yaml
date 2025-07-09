@@ -1,6 +1,5 @@
-# charts/service-model-inference/Chart.yaml
 apiVersion: v2
-name: aktus-inference-service
 description: Model Inference Service for Aktus platform
-version: 1.0.0
+name: aktus-inference-service
 type: application
+version: 1.0.0
