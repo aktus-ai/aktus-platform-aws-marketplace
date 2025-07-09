@@ -1,0 +1,14 @@
+{{- if .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-redis-pvc
+spec:
+  accessModes:
+    - {{ .Values.redis.persistence.accessMode }}
+  storageClassName: {{ .Values.redis.persistence.storageClassName }}
+  volumeName: {{ .Release.Name }}-redis-gp2-pv
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size }}
+{{- end }} 
