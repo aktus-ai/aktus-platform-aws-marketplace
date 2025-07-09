@@ -6,55 +6,15 @@ metadata:
 data:
   init.sql: |
     -- CreateTable
-    CREATE TABLE "Account" (
-        "id" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "type" TEXT NOT NULL,
-        "provider" TEXT NOT NULL,
-        "providerAccountId" TEXT NOT NULL,
-        "refresh_token" TEXT,
-        "access_token" TEXT,
-        "expires_at" INTEGER,
-        "token_type" TEXT,
-        "scope" TEXT,
-        "id_token" TEXT,
-        "session_state" TEXT,
-        "oauth_token_secret" TEXT,
-        "oauth_token" TEXT,
-
-        CONSTRAINT "Account_pkey" PRIMARY KEY ("id")
-    );
-
-    -- CreateTable
-    CREATE TABLE "Session" (
-        "id" TEXT NOT NULL,
-        "sessionToken" TEXT NOT NULL,
-        "userId" TEXT NOT NULL,
-        "expires" TIMESTAMP(3) NOT NULL,
-
-        CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
-    );
-
-    -- CreateTable
     CREATE TABLE "User" (
-        "id" TEXT NOT NULL,
-        "name" TEXT,
-        "username" TEXT,
-        "password" TEXT,
-        "email" TEXT,
-        "emailVerified" TIMESTAMP(3),
-        "image" TEXT,
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL,
+        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+        "email" VARCHAR(255) NOT NULL,
+        "password_hash" TEXT NOT NULL,
+        "salt" TEXT,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL,
 
         CONSTRAINT "User_pkey" PRIMARY KEY ("id")
-    );
-
-    -- CreateTable
-    CREATE TABLE "VerificationToken" (
-        "identifier" TEXT NOT NULL,
-        "token" TEXT NOT NULL,
-        "expires" TIMESTAMP(3) NOT NULL
     );
 
     -- CreateTable
@@ -62,8 +22,8 @@ data:
         "id" TEXT NOT NULL,
         "name" TEXT NOT NULL,
         "description" TEXT,
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         CONSTRAINT "Domain_pkey" PRIMARY KEY ("id")
     );
@@ -76,10 +36,13 @@ data:
         "embedding_model" TEXT NOT NULL DEFAULT '',
         "chunking_strategy" TEXT NOT NULL DEFAULT 'semantic',
         "metric_type" TEXT NOT NULL DEFAULT 'cosine',
-        "indexName" TEXT NOT NULL DEFAULT '',
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "domainId" TEXT NOT NULL,
+        "index_name" TEXT NOT NULL DEFAULT '',
+        "in_progress" BOOLEAN NOT NULL DEFAULT FALSE,
+        "graphrag_indexed" BOOLEAN NOT NULL DEFAULT FALSE,
+        "file_names" TEXT DEFAULT '',
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "domain_id" TEXT NOT NULL,
 
         CONSTRAINT "Usecase_pkey" PRIMARY KEY ("id")
     );
@@ -90,19 +53,42 @@ data:
         "file_name" TEXT NOT NULL,
         "summary_title" TEXT NOT NULL,
         "summary_text" TEXT NOT NULL,
-        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "usecaseId" TEXT NOT NULL,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "usecase_id" TEXT NOT NULL,
 
         CONSTRAINT "FileSummary_pkey" PRIMARY KEY ("id")
     );
 
     -- CreateTaskStatusModel enum type
-    CREATE TYPE "TaskStatusModel" AS ENUM ('PENDING', 'STARTED', 'SUCCESS', 'FAILURE', 'REVOKED');
+    DO $$ BEGIN
+        CREATE TYPE "TaskStatusModel" AS ENUM ('PENDING', 'STARTED', 'SUCCESS', 'FAILURE', 'REVOKED');
+    EXCEPTION
+        WHEN duplicate_object THEN null;
+    END $$;
+
+    -- CreateTable
+    CREATE TABLE "Batch" (
+        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "total_tasks" INTEGER NOT NULL,
+        "usecase_id" TEXT NOT NULL,
+        "batch_status" "TaskStatusModel" NOT NULL DEFAULT 'PENDING',
+        "stoppage_service_name" TEXT,
+        "stoppage_task_result" JSONB,
+        "total_graphrag_step_number" INTEGER,
+        "current_graphrag_step_number" INTEGER,
+        "current_graphrag_workflow_name" TEXT,
+        "current_graphrag_workflow_status" "TaskStatusModel" DEFAULT 'PENDING',
+
+        CONSTRAINT "Batch_pkey" PRIMARY KEY ("id")
+    );
 
     -- CreateTable
     CREATE TABLE "Task" (
-        "id" UUID NOT NULL,
+        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+        "batch_id" UUID NOT NULL,
         "status" "TaskStatusModel" NOT NULL DEFAULT 'PENDING',
         "date_created" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "date_updated" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -115,28 +101,19 @@ data:
     );
 
     -- CreateIndex
-    CREATE UNIQUE INDEX "Session_sessionToken_key" ON "Session"("sessionToken");
-
-    -- CreateIndex
-    CREATE UNIQUE INDEX "User_username_key" ON "User"("username");
-
-    -- CreateIndex
     CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
-
-    -- CreateIndex
-    CREATE UNIQUE INDEX "VerificationToken_token_key" ON "VerificationToken"("token");
 
     -- CreateIndex
     CREATE UNIQUE INDEX "Domain_name_key" ON "Domain"("name");
 
     -- AddForeignKey
-    ALTER TABLE "Account" ADD CONSTRAINT "Account_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "Usecase" ADD CONSTRAINT "Usecase_domain_id_fkey" FOREIGN KEY ("domain_id") REFERENCES "Domain"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
     -- AddForeignKey
-    ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "FileSummary" ADD CONSTRAINT "FileSummary_usecase_id_fkey" FOREIGN KEY ("usecase_id") REFERENCES "Usecase"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
     -- AddForeignKey
-    ALTER TABLE "Usecase" ADD CONSTRAINT "Usecase_domainId_fkey" FOREIGN KEY ("domainId") REFERENCES "Domain"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "Batch" ADD CONSTRAINT "Batch_usecase_id_fkey" FOREIGN KEY ("usecase_id") REFERENCES "Usecase"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
     -- AddForeignKey
-    ALTER TABLE "FileSummary" ADD CONSTRAINT "FileSummary_usecaseId_fkey" FOREIGN KEY ("usecaseId") REFERENCES "Usecase"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "Task" ADD CONSTRAINT "Task_batch_id_fkey" FOREIGN KEY ("batch_id") REFERENCES "Batch"("id") ON DELETE CASCADE ON UPDATE CASCADE;

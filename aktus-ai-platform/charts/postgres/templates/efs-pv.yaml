@@ -1,19 +1,17 @@
+{{- if .Values.aktusPostgres.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: {{ .Release.Name }}-postgres-efs-pv
+  name: {{ .Release.Name }}-postgres-gp2-pv
 spec:
   capacity:
-    storage: 50Gi
+    storage: {{ .Values.aktusPostgres.persistence.size }}
   volumeMode: Filesystem
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.aktusPostgres.persistence.accessMode }}
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: efs-sc
-  csi:
-    driver: efs.csi.aws.com
-    volumeHandle: {{ .Values.aktusPostgres.efs.fileSystemId }}
-    {{- if .Values.aktusPostgres.efs.basePath }}
-    volumeAttributes:
-      path: {{ .Values.aktusPostgres.efs.basePath | quote }}
-    {{- end -}} 
+  storageClassName: {{ .Values.aktusPostgres.persistence.storageClass }}
+  hostPath:
+    path: /tmp/postgres-data
+    type: DirectoryOrCreate
+{{- end }} 

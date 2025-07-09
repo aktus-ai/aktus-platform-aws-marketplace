@@ -1,4 +1,5 @@
 # charts/aktus-postgres-service/templates/pvc.yaml
+{{- if .Values.aktusPostgres.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -12,3 +13,5 @@ spec:
     requests:
       storage: {{ .Values.aktusPostgres.persistence.size }}
   storageClassName: {{ .Values.aktusPostgres.persistence.storageClass }}
+  volumeName: {{ .Release.Name }}-postgres-gp2-pv
+{{- end }}

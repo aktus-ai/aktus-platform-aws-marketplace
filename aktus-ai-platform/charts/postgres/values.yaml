@@ -6,12 +6,12 @@ aktusPostgres:
   database: root
   port: 5432
   persistence:
-    enabled: false
-    size: 5Gi
-    storageClass: "gp3"
+    enabled: true
+    size: 500Gi
+    storageClass: "gp2"
     accessMode: "ReadWriteOnce"
   efs:
-    fileSystemId: "fs-0d4f6da8071634ae0"
+    fileSystemId: "fs-placeholder"
   initScripts:
     enabled: true
     configMap: postgres-init
