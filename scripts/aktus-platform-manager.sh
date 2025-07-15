@@ -52,6 +52,12 @@ install() {
     
     echo "Installing..."
     cd aktus-platform && helm upgrade --install aktus-ai-platform . -n aktus-ai-platform-dev --create-namespace --force
+    cd ..
+
+    # Patch general-purpose nodepool to support GPU instances for inference service
+    echo "Adding GPU support to general-purpose nodepool..."
+    kubectl patch nodepool general-purpose --type='merge' -p='{"spec":{"template":{"spec":{"requirements":[{"key":"karpenter.sh/capacity-type","operator":"In","values":["on-demand"]},{"key":"eks.amazonaws.com/instance-category","operator":"In","values":["c","m","r","g","p"]},{"key":"eks.amazonaws.com/instance-generation","operator":"Gt","values":["4"]},{"key":"kubernetes.io/arch","operator":"In","values":["amd64"]},{"key":"kubernetes.io/os","operator":"In","values":["linux"]}]}}}}'
+
     echo "Deployment ready"
 }
 
@@ -71,11 +77,18 @@ uninstall() {
     echo "Uninstalled"
 }
 
+gpu_setup() {
+    echo "Adding GPU support to general-purpose nodepool..."
+    kubectl patch nodepool general-purpose --type='merge' -p='{"spec":{"template":{"spec":{"requirements":[{"key":"karpenter.sh/capacity-type","operator":"In","values":["on-demand"]},{"key":"eks.amazonaws.com/instance-category","operator":"In","values":["c","m","r","g","p"]},{"key":"eks.amazonaws.com/instance-generation","operator":"Gt","values":["4"]},{"key":"kubernetes.io/arch","operator":"In","values":["amd64"]},{"key":"kubernetes.io/os","operator":"In","values":["linux"]}]}}}}'
+    echo "GPU support added. Inference pods will now be scheduled on GPU instances automatically."
+}
+
 case "${1:-help}" in
     "efs") install "$2" ;;
     "install") install "$2" ;;
     "patch") patch ;;
     "endpoints") echo "Research: $(get_endpoint aktus-research)"; echo "KDA: $(get_endpoint aktus-knowledge-assistant)" ;;
+    "gpu-setup") gpu_setup ;;
     "uninstall") uninstall ;;
     *) cat << EOF
 Aktus Manager
@@ -85,13 +98,20 @@ Commands:
   install <id>   Same as efs command
   patch          Patch KDA endpoints
   endpoints      Show endpoints
+  gpu-setup      Add GPU support to general-purpose nodepool
   uninstall      Remove deployment
 
 Examples:
   $0 efs fs-1234567890abcdef0
   $0 install fs-1234567890abcdef0
   $0 patch
+  $0 gpu-setup
   $0 uninstall
+
+GPU Management:
+  GPU support is added by patching the general-purpose nodepool to include GPU instance categories (g, p).
+  This allows inference pods with GPU requirements to be automatically scheduled on appropriate instances.
+  No separate GPU nodepool is needed - Karpenter handles scheduling based on resource requirements.
 EOF
         ;;
 esac 
