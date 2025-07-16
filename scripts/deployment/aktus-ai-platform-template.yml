@@ -1,0 +1,816 @@
+# Cloud Formation Template
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Minimal AWS Infrastructure for Aktus AI Platform - Essential components only'
+
+Parameters:
+  # Network Configuration
+  VpcCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for the VPC'
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+  
+  VpcPrefix:
+    Type: String
+    Default: 'aktus-platform'
+    Description: 'Prefix for resource names'
+  
+  # EKS Configuration
+  EnableAutoMode:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable EKS Auto Mode for automated infrastructure management'
+  
+  EKSClusterName:
+    Type: String
+    Default: ''
+    Description: 'EKS cluster name (leave empty to auto-generate)'
+  
+  EKSVersion:
+    Type: String
+    Default: '1.31'
+    AllowedValues: ['1.29', '1.30', '1.31']
+    Description: 'EKS cluster version'
+  
+  # Node Configuration (only applies when Auto Mode is disabled)
+  NodeInstanceType:
+    Default: 't3.xlarge'
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+      - c5.large
+      - c5.xlarge
+      - c5.2xlarge
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - g4dn.xlarge
+      - g4dn.2xlarge
+    Description: 'EC2 instance type for EKS nodes (ignored if Auto Mode enabled)'
+    Type: String
+  
+  NumberOfNodes:
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+    Description: 'Number of EKS nodes (ignored if Auto Mode enabled)'
+    Type: Number
+  
+  NodeVolumeSize:
+    Default: 50
+    MinValue: 20
+    MaxValue: 500
+    Description: 'Size of node root EBS volumes in GB (ignored if Auto Mode enabled)'
+    Type: Number
+  
+  KeyPairName:
+    Type: String
+    Default: ''
+    Description: 'EC2 Key Pair for SSH access (optional, ignored if Auto Mode enabled)'
+  
+  # Access Control Configuration
+  AdditionalAdminUsers:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Comma-separated list of additional IAM users that need admin access to the cluster (e.g., user1,user2)'
+  
+  AdditionalAdminRoles:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Comma-separated list of additional IAM roles that need admin access to the cluster (e.g., role1,role2)'
+
+
+Conditions:
+  KeyPairProvided: 
+    !Not [!Equals [!Ref KeyPairName, '']]
+  EKSClusterNameProvided: 
+    !Not [!Equals [!Ref EKSClusterName, '']]
+  AutoModeEnabled: 
+    !Equals [!Ref EnableAutoMode, 'true']
+  AutoModeDisabled: 
+    !Not [!Condition AutoModeEnabled]
+  HasAdditionalAdminUsers:
+    !Not [!Equals [!Join [',', !Ref AdditionalAdminUsers], '']]
+  HasAdditionalAdminRoles:
+    !Not [!Equals [!Join [',', !Ref AdditionalAdminRoles], '']]
+
+Resources:
+  # ===== VPC INFRASTRUCTURE =====
+  
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCIDR, 2, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-subnet-1'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCIDR, 2, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-subnet-2'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  # Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-routes'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  # ===== SECURITY GROUPS =====
+  
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS cluster
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-eks-cluster-sg'
+
+  EKSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: AutoModeDisabled
+    Properties:
+      GroupDescription: Security group for EKS nodes
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-eks-node-sg'
+
+  # Security Group Ingress Rules (separate to avoid circular dependencies)
+  EKSNodeIngressFromCluster1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EKSNodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+
+  EKSNodeIngressFromCluster2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EKSNodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+
+  EKSNodeIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EKSNodeSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+
+  # EFS Security Group
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EFS mount targets
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs-sg'
+
+  EFSIngressFromNodes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+
+  EFSIngressFromAutoModeNodes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeEnabled
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+
+  # Allow EFS access from cluster security group (for all modes)
+  EFSIngressFromClusterSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EKSClusterSecurityGroup
+
+  # ===== EFS FILE SYSTEM =====
+  
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      ThroughputMode: provisioned
+      ProvisionedThroughputInMibps: 50
+      Encrypted: true
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs'
+
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # ===== IAM ROLES =====
+  
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-cluster-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSComputePolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy
+          - !Ref 'AWS::NoValue'
+
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Condition: AutoModeDisabled
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-nodegroup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  EKSAutoModeNodeRole:
+    Type: AWS::IAM::Role
+    Condition: AutoModeEnabled
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-automode-node-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
+
+  # ===== CUSTOM RESOURCE FOR HELM INSTALLATION =====
+  
+  HelmInstallationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-helm-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      Policies:
+        - PolicyName: EKSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - sts:AssumeRole
+                Resource: '*'
+
+  HelmInstallationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-connector'
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt HelmInstallationLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          
+          def lambda_handler(event, context):
+              print(f"Lambda triggered: {event['RequestType']}")
+              
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      cluster_name = event['ResourceProperties']['ClusterName']
+                      region = event['ResourceProperties']['Region']
+                      
+                      print(f"Verifying EKS cluster: {cluster_name} in {region}")
+                      
+                      # Check cluster status using boto3
+                      eks = boto3.client('eks', region_name=region)
+                      cluster = eks.describe_cluster(name=cluster_name)['cluster']
+                      
+                      cluster_status = cluster['status']
+                      cluster_endpoint = cluster['endpoint']
+                      cluster_version = cluster['version']
+                      
+                      print(f"? Cluster Status: {cluster_status}")
+                      print(f"? Cluster Endpoint: {cluster_endpoint}")
+                      print(f"? Cluster Version: {cluster_version}")
+                      
+                      if cluster_status == 'ACTIVE':
+                          message = f"EKS cluster {cluster_name} is ACTIVE and accessible"
+                          print(f"? {message}")
+                      else:
+                          message = f"EKS cluster {cluster_name} status: {cluster_status}"
+                          print(f"?? {message}")
+                      
+                      response_data = {
+                          'Status': 'SUCCESS',
+                          'Message': message,
+                          'ClusterName': cluster_name,
+                          'ClusterStatus': cluster_status,
+                          'ClusterEndpoint': cluster_endpoint,
+                          'ClusterVersion': cluster_version,
+                          'ResearchEndpoint': 'Manual deployment required',
+                          'KDAEndpoint': 'Manual deployment required'
+                      }
+                      
+                  else:  # Delete
+                      print("Delete operation - no action needed")
+                      response_data = {'Status': 'SUCCESS', 'Message': 'Delete completed'}
+                      
+              except Exception as e:
+                  print(f"? Error: {e}")
+                  response_data = {'Status': 'FAILED', 'Message': str(e)}
+              
+              # Send response to CloudFormation
+              response_url = event['ResponseURL']
+              response_body = json.dumps({
+                  'Status': response_data['Status'],
+                  'Reason': response_data['Message'],
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              }).encode()
+              
+              http = urllib3.PoolManager()
+              http.request('PUT', response_url, body=response_body, 
+                          headers={'Content-Type': 'application/json'})
+              
+              return response_data
+
+  # ===== EKS CLUSTER =====
+  
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !If [EKSClusterNameProvided, !Ref EKSClusterName, !Sub '${VpcPrefix}-${AWS::StackName}-cluster']
+      Version: !Ref EKSVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref EKSClusterSecurityGroup
+        SubnetIds:
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+      ComputeConfig: !If 
+        - AutoModeEnabled
+        - Enabled: true
+          NodeRoleArn: !GetAtt EKSAutoModeNodeRole.Arn
+          NodePools:
+            - general-purpose
+            - system
+        - !Ref 'AWS::NoValue'
+      KubernetesNetworkConfig: !If 
+        - AutoModeEnabled
+        - ElasticLoadBalancing:
+            Enabled: true
+        - !Ref 'AWS::NoValue'
+      StorageConfig: !If 
+        - AutoModeEnabled
+        - BlockStorage:
+            Enabled: true
+        - !Ref 'AWS::NoValue'
+      AccessConfig:
+        AuthenticationMode: API
+    DependsOn: EKSClusterRole
+
+  # ===== EKS ACCESS ENTRIES =====
+  
+  # Access entries for additional admin users
+  AdminUserAccessEntry1:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminUsers
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:user/${UserName}'
+        - UserName: !Select [0, !Ref AdditionalAdminUsers]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  AdminUserAccessEntry2:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminUsers
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:user/${UserName}'
+        - UserName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminUsers]]]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  # Access entries for additional admin roles
+  AdminRoleAccessEntry1:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminRoles
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+        - RoleName: !Select [0, !Ref AdditionalAdminRoles]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  AdminRoleAccessEntry2:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminRoles
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+        - RoleName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminRoles]]]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Condition: AutoModeDisabled
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub '${VpcPrefix}-${AWS::StackName}-nodegroup'
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      AmiType: AL2_x86_64
+      CapacityType: ON_DEMAND
+      DiskSize: !Ref NodeVolumeSize
+      ScalingConfig:
+        MinSize: !Ref NumberOfNodes
+        MaxSize: !Ref NumberOfNodes
+        DesiredSize: !Ref NumberOfNodes
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+    DependsOn: EKSNodeGroupRole
+
+  # Custom Resource to test EKS connectivity
+  EKSConnectivityTest:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt HelmInstallationLambda.Arn
+      ClusterName: !Ref EKSCluster
+      Region: !Ref 'AWS::Region'
+    DependsOn: 
+      - EKSCluster
+
+Outputs:
+  # VPC Outputs
+  VPCId:
+    Description: 'VPC ID'
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC-ID'
+
+  PublicSubnets:
+    Description: 'Public subnet IDs'
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PUBLIC-SUBNETS'
+
+  # EKS Outputs
+  EKSClusterName:
+    Description: 'EKS Cluster Name'
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-NAME'
+
+  EKSClusterEndpoint:
+    Description: 'EKS Cluster Endpoint'
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-ENDPOINT'
+
+  # EFS Outputs
+  EFSFileSystemId:
+    Description: 'EFS File System ID'
+    Value: !Ref EFSFileSystem
+    Export:
+      Name: !Sub '${AWS::StackName}-EFS-ID'
+
+  # Auto Mode Status
+  AutoModeEnabled:
+    Description: 'Whether EKS Auto Mode is enabled'
+    Value: !Ref EnableAutoMode
+    Export:
+      Name: !Sub '${AWS::StackName}-AUTO-MODE-ENABLED'
+
+  # EKS Connectivity Test Status
+  EKSConnectivityStatus:
+    Description: 'EKS connectivity test status'
+    Value: !GetAtt EKSConnectivityTest.Message
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CONNECTIVITY-STATUS'
+
+  # Service Endpoints (manual deployment required)
+  ResearchServiceEndpoint:
+    Description: 'Aktus Research Service endpoint (manual deployment required)'
+    Value: !GetAtt EKSConnectivityTest.ResearchEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-RESEARCH-ENDPOINT'
+
+  KDAServiceEndpoint:
+    Description: 'Aktus Knowledge Assistant endpoint (manual deployment required)'
+    Value: !GetAtt EKSConnectivityTest.KDAEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-KDA-ENDPOINT'
+
+  # Post-deployment Commands
+  PostDeploymentCommands:
+    Description: 'Commands to run after deployment'
+    Value: !Sub 
+      - |
+        # Configure kubectl
+        aws eks update-kubeconfig --region ${AWS::Region} --name ${EKSCluster}
+        
+        ${EFSCommands}
+        
+        # Install and Configure Helm
+        echo "Installing Helm..."
+        
+        # Download and install Helm
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod 700 get_helm.sh
+        ./get_helm.sh
+        rm get_helm.sh
+        
+        # Verify Helm installation
+        helm version
+        
+        # Enable Helm OCI support
+        export HELM_EXPERIMENTAL_OCI=1
+        
+        # Login to AWS ECR for Helm chart access
+        echo "Logging into AWS ECR..."
+        aws ecr get-login-password --region ${AWS::Region} | helm registry login --username AWS --password-stdin 709825985650.dkr.ecr.us-east-1.amazonaws.com
+        
+        # Create and setup chart directory
+        echo "Setting up Aktus Platform Helm charts..."
+        mkdir -p awsmp-chart
+        cd awsmp-chart
+        
+        # Pull Aktus Platform Helm chart
+        echo "Pulling Aktus Platform Helm chart..."
+        helm pull oci://709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr --version 1.0.5
+        
+        # Extract chart and cleanup tar files
+        echo "Extracting Helm chart..."
+        tar xf *.tar.gz && find . -maxdepth 1 -name "*.tar.gz" -delete
+        
+        # Download additional platform components
+        echo "Downloading platform components..."
+        curl -L "https://drive.usercontent.google.com/download?id=1GBTKm7dPMrAuZEzkMyBkHF5iNz1XV9xc&export=download&confirm=t" -o archive.zip
+        unzip archive.zip
+        rm archive.zip
+        
+        # Make all shell scripts executable
+        chmod +x *.sh
+        
+        # Return to parent directory
+        cd ..
+        
+        # Create namespace for Aktus Platform
+        kubectl create namespace aktus-ai-platform-dev
+        
+        # Deploy Aktus Platform using your existing script
+        echo "Ready to deploy Aktus Platform. Run the following commands:"
+        echo "cd awsmp-chart"
+        echo "./aktus-platform-manager.sh efs ${EFSFileSystem}"
+        
+        # Optional: Install Karpenter for advanced auto-scaling (uncomment if needed)
+        # echo "Installing Karpenter for auto-scaling..."
+        # helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter --version 0.37.0 \
+        #   --namespace karpenter --create-namespace \
+        #   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::${AWS::AccountId}:role/${VpcPrefix}-${AWS::StackName}-eks-cluster-role \
+        #   --set settings.clusterName=${EKSCluster} \
+        #   --wait
+      - EFSCommands: !If
+          - AutoModeDisabled
+          - |
+            # Install EFS CSI Driver (required when Auto Mode is disabled)
+            kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-1.7"
+            
+            # Create EFS StorageClass
+            kubectl apply -f - <<EOF
+            apiVersion: storage.k8s.io/v1
+            kind: StorageClass
+            metadata:
+              name: efs-sc
+            provisioner: efs.csi.aws.com
+            parameters:
+              provisioningMode: efs-ap
+              fileSystemId: ${EFSFileSystem}
+              directoryPerms: "700"
+            reclaimPolicy: Delete
+            volumeBindingMode: Immediate
+            EOF
+          - |
+            # EFS CSI Driver and StorageClass are managed automatically by Auto Mode
+            # No additional setup required for EFS integration
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcCIDR
+          - VpcPrefix
+      - Label:
+          default: 'EKS Cluster Configuration'
+        Parameters:
+          - EnableAutoMode
+          - EKSClusterName
+          - EKSVersion
+      - Label:
+          default: 'Node Configuration (Traditional Mode Only)'
+        Parameters:
+          - NodeInstanceType
+          - NumberOfNodes
+          - NodeVolumeSize
+          - KeyPairName
+      - Label:
+          default: 'Access Control Configuration'
+        Parameters:
+          - AdditionalAdminUsers
+          - AdditionalAdminRoles
+    ParameterLabels:
+      VpcCIDR:
+        default: 'VPC CIDR Block'
+      VpcPrefix:
+        default: 'VPC Resource Name Prefix'
+      EnableAutoMode:
+        default: 'Enable EKS Auto Mode'
+      EKSClusterName:
+        default: 'EKS Cluster Name'
+      EKSVersion:
+        default: 'EKS Version'
+      NodeInstanceType:
+        default: 'Node Instance Type'
+      NumberOfNodes:
+        default: 'Number of Nodes'
+      NodeVolumeSize:
+        default: 'Node Volume Size (GB)'
+      KeyPairName:
+        default: 'EC2 Key Pair (Optional)'
+      AdditionalAdminUsers:
+        default: 'Additional Admin IAM Users'
+      AdditionalAdminRoles:
+        default: 'Additional Admin IAM Roles' 
