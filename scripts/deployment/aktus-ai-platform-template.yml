@@ -441,6 +441,10 @@ Resources:
               """Install kubectl and helm in /tmp for Lambda execution."""
               print("Installing CLI tools...")
               
+               # Ensure curl is available
+              print("Installing curl via yum…")
+              subprocess.run(["yum", "install", "-y", "curl"], check=True)
+
               # Create /tmp/bin directory
               bin_dir = "/tmp/bin"
               os.makedirs(bin_dir, exist_ok=True)
