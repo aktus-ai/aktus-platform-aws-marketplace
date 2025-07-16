@@ -410,74 +410,170 @@ Resources:
       Code:
         ZipFile: |
           import json
+          import os
+          import subprocess
           import boto3
           import urllib3
-          
+
+          # Constants
+          NS = "aktus-ai-platform-dev"
+          CHART = "aktus-platform"
+
+          def send_cfn_response(event, context, response_data):
+              """Send status back to CloudFormation."""
+              response_url = event["ResponseURL"]
+              body = {
+                  "Status": response_data["Status"],
+                  "Reason": response_data.get("Message", ""),
+                  "PhysicalResourceId": context.log_stream_name,
+                  "StackId": event["StackId"],
+                  "RequestId": event["RequestId"],
+                  "LogicalResourceId": event["LogicalResourceId"],
+                  "Data": response_data,
+              }
+              encoded = json.dumps(body).encode("utf-8")
+              http = urllib3.PoolManager()
+              http.request(
+                  "PUT",
+                  response_url,
+                  body=encoded,
+                  headers={"Content-Type": "application/json"},
+              )
+
           def lambda_handler(event, context):
               print(f"Lambda triggered: {event['RequestType']}")
-              
               try:
-                  if event['RequestType'] in ['Create', 'Update']:
-                      cluster_name = event['ResourceProperties']['ClusterName']
-                      region = event['ResourceProperties']['Region']
-                      
-                      print(f"Verifying EKS cluster: {cluster_name} in {region}")
-                      
-                      # Check cluster status using boto3
-                      eks = boto3.client('eks', region_name=region)
-                      cluster = eks.describe_cluster(name=cluster_name)['cluster']
-                      
-                      cluster_status = cluster['status']
-                      cluster_endpoint = cluster['endpoint']
-                      cluster_version = cluster['version']
-                      
-                      print(f"? Cluster Status: {cluster_status}")
-                      print(f"? Cluster Endpoint: {cluster_endpoint}")
-                      print(f"? Cluster Version: {cluster_version}")
-                      
-                      if cluster_status == 'ACTIVE':
-                          message = f"EKS cluster {cluster_name} is ACTIVE and accessible"
-                          print(f"? {message}")
-                      else:
-                          message = f"EKS cluster {cluster_name} status: {cluster_status}"
-                          print(f"?? {message}")
-                      
+                  if event["RequestType"] in ("Create", "Update"):
+                      eks = boto3.client("eks", region_name=event["ResourceProperties"]["Region"])
+                      cluster = eks.describe_cluster(name=event["ResourceProperties"]["ClusterName"])["cluster"]
+                      status = cluster["status"]
+                      message = f"EKS cluster {cluster['name']} status: {status}"
                       response_data = {
-                          'Status': 'SUCCESS',
-                          'Message': message,
-                          'ClusterName': cluster_name,
-                          'ClusterStatus': cluster_status,
-                          'ClusterEndpoint': cluster_endpoint,
-                          'ClusterVersion': cluster_version,
-                          'ResearchEndpoint': 'Manual deployment required',
-                          'KDAEndpoint': 'Manual deployment required'
+                          "Status": "SUCCESS",
+                          "Message": message,
+                          "ClusterName": cluster["name"],
+                          "ClusterStatus": status,
+                          "ClusterEndpoint": cluster["endpoint"],
+                          "ClusterVersion": cluster["version"],
                       }
-                      
                   else:  # Delete
-                      print("Delete operation - no action needed")
-                      response_data = {'Status': 'SUCCESS', 'Message': 'Delete completed'}
-                      
+                      print("Delete operation — nothing to do")
+                      response_data = {"Status": "SUCCESS", "Message": "Delete complete"}
+
               except Exception as e:
-                  print(f"? Error: {e}")
-                  response_data = {'Status': 'FAILED', 'Message': str(e)}
-              
-              # Send response to CloudFormation
-              response_url = event['ResponseURL']
-              response_body = json.dumps({
-                  'Status': response_data['Status'],
-                  'Reason': response_data['Message'],
-                  'PhysicalResourceId': context.log_stream_name,
-                  'StackId': event['StackId'],
-                  'RequestId': event['RequestId'],
-                  'LogicalResourceId': event['LogicalResourceId'],
-                  'Data': response_data
-              }).encode()
-              
-              http = urllib3.PoolManager()
-              http.request('PUT', response_url, body=response_body, 
-                          headers={'Content-Type': 'application/json'})
-              
+                  print(f"Error during CFN handling: {e}")
+                  response_data = {"Status": "FAILED", "Message": str(e)}
+
+              # Always send the CFN response first
+              send_cfn_response(event, context, response_data)
+
+              # Then kick off your post-install logic (we don't block CFN on these steps)
+              if event["RequestType"] in ("Create", "Update"):
+                  try:
+                      install(event["ResourceProperties"]["EfsFileSystemId"])
+                      patch_kda()
+                  except Exception as e:
+                      print(f"Post-install error: {e}")
+
               return response_data
+
+          # === Post-install helpers ===
+
+          def gpu_setup():
+              print("Adding GPU support to general-purpose nodepool...")
+              subprocess.run([
+                  "kubectl", "patch", "nodepool", "general-purpose",
+                  "--type=merge",
+                  "-p={\"spec\":{\"template\":{\"spec\":{\"requirements\":["
+                  "{\"key\":\"karpenter.sh/capacity-type\",\"operator\":\"In\",\"values\":[\"on-demand\"]},"
+                  "{\"key\":\"eks.amazonaws.com/instance-category\",\"operator\":\"In\",\"values\":[\"c\",\"m\",\"r\",\"g\",\"p\"]},"
+                  "{\"key\":\"eks.amazonaws.com/instance-generation\",\"operator\":\"Gt\",\"values\":[\"4\"]},"
+                  "{\"key\":\"kubernetes.io/arch\",\"operator\":\"In\",\"values\":[\"amd64\"]},"
+                  "{\"key\":\"kubernetes.io/os\",\"operator\":\"In\",\"values\":[\"linux\"]}"
+                  "]}}}}"
+              ], check=True)
+              print("GPU support added.")
+
+          def get_endpoint(svc):
+              for field in [
+                  '{.status.loadBalancer.ingress[0].hostname}',
+                  '{.status.loadBalancer.ingress[0].ip}',
+                  '{.spec.clusterIP}'
+              ]:
+                  try:
+                      ip = subprocess.check_output([
+                          "kubectl", "get", "svc", svc, "-n", NS,
+                          "-o", f"jsonpath={field}"
+                      ]).decode().strip()
+                      if ip:
+                          return f"http://{ip}:8080"
+                  except subprocess.CalledProcessError:
+                      continue
+              return None
+
+          def update_efs(efs_id):
+              print(f"Updating EFS ID in chart values to: {efs_id}")
+              services = [
+                  "aktus-embedding-service",
+                  "aktus-inference-service",
+                  "aktus-multimodal-data-ingestion-service",
+                  "aktus-research-service"
+               ]
+              for svc in services:
+                  path = os.path.join(CHART, "charts", svc, "values.yaml")
+                  subprocess.run([
+                      "sed", "-i.bak",
+                      rf"s|fileSystemId: \".*\"|fileSystemId: \"{efs_id}\"|g",
+                      path
+                  ], check=False)
+                  print(f"  • {svc} updated")
+
+          def create_storage_class(efs_id):
+              print(f"Applying StorageClass for EFS: {efs_id}")
+              yaml = f"""
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: efs-sc
+          provisioner: efs.csi.aws.com
+          parameters:
+            provisioningMode: efs-ap
+            fileSystemId: {efs_id}
+            directoryPerms: "700"
+          reclaimPolicy: Delete
+          volumeBindingMode: Immediate
+          """
+              proc = subprocess.Popen(["kubectl", "apply", "-f", "-"], stdin=subprocess.PIPE)
+              proc.communicate(yaml.encode())
+              proc.check_returncode()
+
+          def install(efs_id):
+              create_storage_class(efs_id)
+              update_efs(efs_id)
+
+              print("Helm upgrading/installing chart…")
+              subprocess.run([
+                  "helm", "upgrade", "--install", "aktus-ai-platform", ".", 
+                  "-n", NS, "--create-namespace", "--force"
+              ], cwd=CHART, check=True)
+              gpu_setup()
+              print("Install complete.")
+
+          def patch_kda():
+              endpoint = get_endpoint("aktus-research")
+              if not endpoint:
+                  print("Could not discover Research svc endpoint; skipping KDA patch.")
+                  return
+              print(f"Patching KDA deployment with endpoint: {endpoint}")
+              subprocess.run([
+                  "kubectl", "set", "env", "deployment/aktus-knowledge-assistant",
+                  "-n", NS,
+                  f"VITE_SOCKET_URL=ws://{endpoint.split('http://')[-1]}/chat",
+                  f"VITE_API_BASE_URL={endpoint}/db-manager",
+                  f"VITE_LEASE_API_BASE_URL={endpoint}",
+                  f"VITE_API_EMBED_URL={endpoint}/embeddings",
+              ], check=True)
+              print("KDA patched.")
 
   # ===== EKS CLUSTER =====
   
@@ -608,6 +704,7 @@ Resources:
       ServiceToken: !GetAtt HelmInstallationLambda.Arn
       ClusterName: !Ref EKSCluster
       Region: !Ref 'AWS::Region'
+      EfsFileSystemId: !Ref EFSFileSystem
     DependsOn: 
       - EKSCluster
 
