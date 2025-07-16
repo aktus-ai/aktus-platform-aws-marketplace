@@ -1,0 +1,2612 @@
+# Cloud Formation Template - Best Practices Version
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Minimal AWS Infrastructure for Aktus AI Platform - Best Practices for EKS Authentication'
+
+Parameters:
+  # Network Configuration
+  VpcCIDR:
+    Type: String
+    Default: '10.0.0.0/16'
+    Description: 'CIDR block for the VPC'
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8])$'
+    ConstraintDescription: 'Must be a valid CIDR block (e.g., 10.0.0.0/16). Valid subnet mask range is /16 to /28.'
+  
+  VpcPrefix:
+    Type: String
+    Default: 'aktus-platform'
+    Description: 'Prefix for resource names'
+  
+  # EKS Configuration
+  EnableAutoMode:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable EKS Auto Mode for automated infrastructure management'
+  
+  EKSClusterName:
+    Type: String
+    Default: ''
+    Description: 'EKS cluster name (leave empty to auto-generate)'
+  
+  EKSVersion:
+    Type: String
+    Default: '1.31'
+    AllowedValues: ['1.29', '1.30', '1.31']
+    Description: 'EKS cluster version'
+  
+  # Node Configuration (only applies when Auto Mode is disabled)
+  NodeInstanceType:
+    Default: 't3.xlarge'
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+      - c5.large
+      - c5.xlarge
+      - c5.2xlarge
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - g4dn.xlarge
+      - g4dn.2xlarge
+    Description: 'EC2 instance type for EKS nodes (ignored if Auto Mode enabled)'
+    Type: String
+  
+  NumberOfNodes:
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+    Description: 'Number of EKS nodes (ignored if Auto Mode enabled)'
+    Type: Number
+  
+  NodeVolumeSize:
+    Default: 50
+    MinValue: 20
+    MaxValue: 500
+    Description: 'Size of node root EBS volumes in GB (ignored if Auto Mode enabled)'
+    Type: Number
+  
+  KeyPairName:
+    Type: String
+    Default: ''
+    Description: 'EC2 Key Pair for SSH access (optional, ignored if Auto Mode enabled)'
+  
+  # Access Control Configuration
+  AdditionalAdminUsers:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Comma-separated list of additional IAM users that need admin access to the cluster (e.g., user1,user2)'
+  
+  AdditionalAdminRoles:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: 'Comma-separated list of additional IAM roles that need admin access to the cluster (e.g., role1,role2)'
+
+  # AWS Marketplace Helm Chart Configuration
+  MarketplaceChartUri:
+    Type: String
+    Default: '709825985650.dkr.ecr.us-east-1.amazonaws.com/aktus-ai/aktus-ai-platform-aws-marketplace-ecr'
+    Description: 'AWS Marketplace Helm chart URI (ECR repository path)'
+
+  MarketplaceChartVersion:
+    Type: String
+    Default: '1.0.5'
+    Description: 'Version of the AWS Marketplace Helm chart to install'
+
+  MarketplaceChartNamespace:
+    Type: String
+    Default: 'aktus-ai-platform-dev'
+    Description: 'Kubernetes namespace for AWS Marketplace chart installation'
+
+  EnableMarketplaceChart:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'Enable installation of AWS Marketplace Helm chart'
+
+  # API Keys Configuration
+  HuggingFaceToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: 'Hugging Face API token for model access (leave empty to skip secret creation)'
+
+  OpenAIAPIKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: 'OpenAI API key for AI services (leave empty to skip secret creation)'
+
+
+Conditions:
+  KeyPairProvided: 
+    !Not [!Equals [!Ref KeyPairName, '']]
+  EKSClusterNameProvided: 
+    !Not [!Equals [!Ref EKSClusterName, '']]
+  AutoModeEnabled: 
+    !Equals [!Ref EnableAutoMode, 'true']
+  AutoModeDisabled: 
+    !Not [!Condition AutoModeEnabled]
+  HasAdditionalAdminUsers:
+    !Not [!Equals [!Join [',', !Ref AdditionalAdminUsers], '']]
+  HasAdditionalAdminRoles:
+    !Not [!Equals [!Join [',', !Ref AdditionalAdminRoles], '']]
+  EnableMarketplaceChartInstallation:
+    !Equals [!Ref EnableMarketplaceChart, 'true']
+  HasHuggingFaceToken:
+    !Not [!Equals [!Ref HuggingFaceToken, '']]
+  HasOpenAIAPIKey:
+    !Not [!Equals [!Ref OpenAIAPIKey, '']]
+
+Resources:
+  # ===== VPC INFRASTRUCTURE =====
+  
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCIDR, 2, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-subnet-1'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCIDR, 2, 8]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-subnet-2'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  # Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-public-routes'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  # ===== SECURITY GROUPS =====
+
+  EKSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: AutoModeDisabled
+    Properties:
+      GroupDescription: Security group for EKS nodes
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-eks-node-sg'
+
+  # Security Group Ingress Rules (separate to avoid circular dependencies)
+  EKSNodeIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EKSNodeSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+
+  # EFS Security Group
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EFS mount targets
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs-sg'
+
+  # EFS Ingress Rules for Traditional Mode (from custom node security group)
+  EFSIngressFromNodes:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeDisabled
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+      Description: Allow NFS access from EKS custom node security group (traditional mode)
+
+  # EFS Ingress Rule for Auto Mode (from EKS cluster security group)
+  EFSIngressFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AutoModeEnabled
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !GetAtt EKSCluster.ClusterSecurityGroupId
+      Description: Allow NFS access from EKS cluster security group (Auto Mode)
+
+  # ===== EFS FILE SYSTEM =====
+  # Note: EFS security group configuration strategy:
+  # - Traditional Mode: Direct reference to EKSNodeSecurityGroup
+  # - Auto Mode: Direct reference to EKS cluster security group via !GetAtt EKSCluster.ClusterSecurityGroupId
+  
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      ThroughputMode: provisioned
+      ProvisionedThroughputInMibps: 50
+      Encrypted: true
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs'
+
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  # ===== IAM ROLES =====
+  
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-cluster-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSComputePolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSBlockStoragePolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSLoadBalancingPolicy
+          - !Ref 'AWS::NoValue'
+        - !If 
+          - AutoModeEnabled
+          - arn:aws:iam::aws:policy/AmazonEKSNetworkingPolicy
+          - !Ref 'AWS::NoValue'
+
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Condition: AutoModeDisabled
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-nodegroup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  EKSAutoModeNodeRole:
+    Type: AWS::IAM::Role
+    Condition: AutoModeEnabled
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-automode-node-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodeMinimalPolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
+
+  # ===== LAMBDA ROLE AND FUNCTION FOR EKS MANAGEMENT =====
+  
+  EKSConnectorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-connector-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EKSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - eks:GetToken
+                  - eks:DescribeAddon
+                  - eks:UpdateAddon
+                  - sts:GetCallerIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+
+
+  EKSConnectorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${VpcPrefix}-${AWS::StackName}-eks-connector'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt EKSConnectorLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 2048
+      Environment:
+        Variables:
+          PATH: "/opt:/var/task:/usr/local/bin:/usr/bin/:/bin"
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import subprocess
+          import boto3
+          import urllib3
+          import urllib.request
+          import tempfile
+          import shutil
+          import base64
+          import re
+          from botocore.signers import RequestSigner
+          import datetime
+
+          # Enhanced Lambda function for Aktus AI Platform deployment
+          # Incorporates best practices from aktus-platform-manager.sh script:
+          # - EFS ID replacement in chart values (update_efs function)
+          # - Storage class creation with EFS integration
+          # - Endpoint patching for KDA service (patch function)  
+          # - Service endpoint discovery (get_endpoint function)
+          # - GPU support configuration
+          # - Comprehensive error handling and retries
+
+          # Constants
+          NS = "aktus-ai-platform-dev"
+
+          def install_kubernetes_client():
+              """Install kubernetes Python client and dependencies using pip."""
+              print("Installing kubernetes Python client and dependencies...")
+              try:
+                  # Install required packages
+                  packages = [
+                      "kubernetes==28.1.0",
+                      "PyYAML==6.0"  # Required for chart analysis
+                  ]
+                  
+                  for package in packages:
+                      subprocess.check_call([
+                          "/var/lang/bin/python", "-m", "pip", "install", 
+                          package, "-t", "/tmp/python_modules"
+                      ])
+                  
+                  import sys
+                  sys.path.insert(0, "/tmp/python_modules")
+                  print("Kubernetes client and dependencies installed successfully")
+                  return True
+              except Exception as e:
+                  print(f"Failed to install kubernetes client: {e}")
+                  return False
+
+          def get_eks_token(cluster_name, region):
+              """Generate EKS authentication token using AWS recommended method."""
+              try:
+                  import base64
+                  import re
+                  from botocore.signers import RequestSigner
+                  
+                  STS_TOKEN_EXPIRES_IN = 60
+                  session = boto3.session.Session(region_name=region)
+                  client = session.client('sts')
+                  service_id = client.meta.service_model.service_id
+                  
+                  signer = RequestSigner(
+                      service_id,
+                      region,
+                      'sts',
+                      'v4',
+                      session.get_credentials(),
+                      session.events
+                  )
+                  
+                  params = {
+                      'method': 'GET',
+                      'url': f'https://sts.{region}.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15',
+                      'body': {},
+                      'headers': {
+                          'x-k8s-aws-id': cluster_name
+                      },
+                      'context': {}
+                  }
+                  
+                  signed_url = signer.generate_presigned_url(
+                      params,
+                      region_name=region,
+                      expires_in=STS_TOKEN_EXPIRES_IN,
+                      operation_name=''
+                  )
+                  
+                  base64_url = base64.urlsafe_b64encode(signed_url.encode('utf-8')).decode('utf-8')
+                  token = 'k8s-aws-v1.' + re.sub(r'=*', '', base64_url)
+                  
+                  print("EKS token generated successfully")
+                  return token
+                  
+              except Exception as e:
+                  print(f"Error generating EKS token: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return None
+
+          def configure_kubernetes_client(cluster_name, region):
+              """Configure Kubernetes client to connect to EKS cluster using best practices."""
+              print(f"Configuring Kubernetes client for cluster: {cluster_name}")
+              
+              try:
+                  # Import required modules
+                  import base64
+                  import tempfile
+                  # Import kubernetes after installation
+                  from kubernetes import client, config
+                  from kubernetes.client.rest import ApiException
+                  
+                  # Get cluster info
+                  eks = boto3.client("eks", region_name=region)
+                  cluster_info = eks.describe_cluster(name=cluster_name)["cluster"]
+                  
+                  # Generate authentication token
+                  token = get_eks_token(cluster_name, region)
+                  if not token:
+                      raise Exception("Failed to generate EKS authentication token")
+                  
+                  # Create configuration
+                  configuration = client.Configuration()
+                  configuration.host = cluster_info["endpoint"]
+                  configuration.api_key['authorization'] = token
+                  configuration.api_key_prefix['authorization'] = 'Bearer'
+                  
+                  # Write certificate to temp file
+                  cert_data = cluster_info['certificateAuthority']['data']
+                  with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.crt') as cert_file:
+                      cert_file.write(base64.b64decode(cert_data).decode('utf-8'))
+                      cert_file_path = cert_file.name
+                  
+                  configuration.ssl_ca_cert = cert_file_path
+                  configuration.verify_ssl = True
+                  
+                  # Create API client
+                  api_client = client.ApiClient(configuration)
+                  v1 = client.CoreV1Api(api_client)
+                  
+                  print("Kubernetes client configured successfully")
+                  
+                  # Test connection using AWS EKS API (recommended best practice)
+                  try:
+                      # Use AWS EKS API to verify cluster connection and get version
+                      eks_client = boto3.client("eks", region_name=region)
+                      cluster_info = eks_client.describe_cluster(name=cluster_name)
+                      cluster_version = cluster_info['cluster']['version']
+                      cluster_status = cluster_info['cluster']['status']
+                      
+                      print(f"Connected to EKS cluster:")
+                      print(f"  Name: {cluster_name}")
+                      print(f"  Version: {cluster_version}")
+                      print(f"  Status: {cluster_status}")
+                      print(f"  Endpoint: {cluster_info['cluster']['endpoint']}")
+                      
+                      # Quick test of Kubernetes API connectivity (optional)
+                      try:
+                          namespaces = v1.list_namespace(limit=1)
+                          print(f"Kubernetes API test successful - found {len(namespaces.items)} namespaces")
+                      except Exception as k8s_error:
+                          print(f"Note: Kubernetes API test failed (this is expected during initial setup): {k8s_error}")
+                          print("This will work once the Lambda role access entry is fully propagated.")
+                      
+                      return v1, api_client
+                  except Exception as e:
+                      print(f"EKS cluster connection test failed: {e}")
+                      raise
+                      
+              except Exception as e:
+                  print(f"Error configuring Kubernetes client: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  raise
+
+          def wait_for_cluster_ready(cluster_name, region, max_wait=300):
+              """Wait for EKS cluster to be in ACTIVE state."""
+              print(f"Waiting for cluster {cluster_name} to be ready...")
+              eks = boto3.client("eks", region_name=region)
+              
+              import time
+              start_time = time.time()
+              while time.time() - start_time < max_wait:
+                  try:
+                      cluster = eks.describe_cluster(name=cluster_name)["cluster"]
+                      status = cluster["status"]
+                      print(f"Cluster status: {status}")
+                      
+                      if status == "ACTIVE":
+                          print("Cluster is ready!")
+                          return True
+                      elif status in ["FAILED", "DELETING"]:
+                          print(f"Cluster is in failed state: {status}")
+                          return False
+                          
+                      time.sleep(30)  # Wait 30 seconds before checking again
+                  except Exception as e:
+                      print(f"Error checking cluster status: {e}")
+                      time.sleep(30)
+              
+              print("Timeout waiting for cluster to be ready")
+              return False
+
+          def create_storage_class(api_client, efs_id):
+              """Create EFS StorageClass using Kubernetes Python client."""
+              print(f"Creating EFS StorageClass for filesystem: {efs_id}")
+              
+              try:
+                  from kubernetes import client
+                  
+                  # Define StorageClass
+                  storage_class = client.V1StorageClass(
+                      api_version="storage.k8s.io/v1",
+                      kind="StorageClass",
+                      metadata=client.V1ObjectMeta(name="efs-sc"),
+                      provisioner="efs.csi.aws.com",
+                      parameters={
+                          "provisioningMode": "efs-ap",
+                          "fileSystemId": efs_id,
+                          "directoryPerms": "700"
+                      },
+                      reclaim_policy="Delete",
+                      volume_binding_mode="Immediate"
+                  )
+                  
+                  # Create StorageClass using the correct api_client
+                  storage_v1 = client.StorageV1Api(api_client)
+                  storage_v1.create_storage_class(body=storage_class)
+                  print("EFS StorageClass created successfully")
+                  
+              except Exception as e:
+                  print(f"Error creating StorageClass: {e}")
+                  # Check if it already exists
+                  if "already exists" in str(e).lower():
+                      print("StorageClass already exists, continuing...")
+                  else:
+                      raise
+
+          def add_gpu_support(api_client):
+              """Add GPU support to the cluster by creating a custom GPU node pool."""
+              print("Adding GPU support to the cluster...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  
+                  custom_objects_api = client.CustomObjectsApi(api_client)
+                  
+                  # Note: Built-in node pools (general-purpose, system) are managed by AWS
+                  # and cannot be modified via Kubernetes API. They already support GPU instances.
+                  print("?? Built-in node pools already support GPU instances (g, p instance families)")
+                  print("Creating dedicated GPU node pool for optimal GPU workload scheduling...")
+                  
+                  # Create a dedicated GPU node pool for GPU workloads
+                  gpu_nodepool = {
+                      "apiVersion": "karpenter.sh/v1",
+                      "kind": "NodePool", 
+                      "metadata": {
+                          "name": "gpu-nodepool"
+                      },
+                          "spec": {
+                              "template": {
+                              "metadata": {
+                                  "labels": {
+                                      "workload-type": "gpu",
+                                      "provisioner": "aktus-platform"
+                                  }
+                              },
+                                  "spec": {
+                                  "nodeClassRef": {
+                                      "group": "eks.amazonaws.com",
+                                      "kind": "NodeClass", 
+                                      "name": "default"
+                                  },
+                                      "requirements": [
+                                      {
+                                          "key": "karpenter.sh/capacity-type",
+                                          "operator": "In",
+                                          "values": ["on-demand"]
+                                      },
+                                      {
+                                          "key": "eks.amazonaws.com/instance-category", 
+                                          "operator": "In",
+                                          "values": ["g", "p"]  # GPU instance families only
+                                      },
+                                      {
+                                          "key": "eks.amazonaws.com/instance-generation",
+                                          "operator": "Gt", 
+                                          "values": ["4"]
+                                      },
+                                      {
+                                          "key": "kubernetes.io/arch",
+                                          "operator": "In",
+                                          "values": ["amd64"]
+                                      },
+                                      {
+                                          "key": "kubernetes.io/os", 
+                                          "operator": "In",
+                                          "values": ["linux"]
+                                      },
+                                      {
+                                          "key": "eks.amazonaws.com/compute-type",
+                                          "operator": "In",
+                                          "values": ["auto"]
+                                      }
+                                  ],
+                                  "taints": [
+                                      {
+                                          "key": "nvidia.com/gpu",
+                                          "value": "present", 
+                                          "effect": "NoSchedule"
+                                      }
+                                  ]
+                              }
+                          },
+                          "limits": {
+                              "cpu": "1000",
+                              "memory": "1000Gi"
+                          }
+                      }
+                  }
+                  
+                  try:
+                      # Check if GPU nodepool already exists
+                      existing_nodepool = custom_objects_api.get_cluster_custom_object(
+                          group="karpenter.sh",
+                          version="v1", 
+                          plural="nodepools",
+                          name="gpu-nodepool"
+                      )
+                      print("? GPU nodepool already exists")
+                      
+                  except ApiException as e:
+                      if e.status == 404:
+                          # Create the GPU nodepool
+                          custom_objects_api.create_cluster_custom_object(
+                              group="karpenter.sh", 
+                              version="v1",
+                              plural="nodepools",
+                              body=gpu_nodepool
+                          )
+                          print("? GPU nodepool created successfully")
+                          print("   - GPU instances: g4dn, g5, p3, p4, p5 families")
+                          print("   - Taint: nvidia.com/gpu=present:NoSchedule")
+                          print("   - Usage: Add toleration to GPU workloads")
+                      else:
+                          print(f"Error checking GPU nodepool: {e}")
+                          raise e
+                          
+                  print("\n? GPU Workload Instructions:")
+                  print("   To schedule pods on GPU nodes, add this toleration:")
+                  print("   tolerations:")
+                  print("   - key: nvidia.com/gpu")
+                  print("     operator: Equal")
+                  print("     value: present")
+                  print("     effect: NoSchedule")
+                          
+              except Exception as e:
+                  print(f"Error in GPU setup: {e}")
+                  print("Note: Built-in node pools still support GPU instances even without custom GPU nodepool")
+
+          def send_cfn_response(event, context, response_data):
+              """Send status back to CloudFormation."""
+              try:
+                  response_url = event["ResponseURL"]
+                  body = {
+                      "Status": response_data["Status"],
+                      "Reason": response_data.get("Message", ""),
+                      "PhysicalResourceId": context.log_stream_name,
+                      "StackId": event["StackId"],
+                      "RequestId": event["RequestId"],
+                      "LogicalResourceId": event["LogicalResourceId"],
+                      "Data": response_data,
+                  }
+                  encoded = json.dumps(body).encode("utf-8")
+                  http = urllib3.PoolManager()
+                  response = http.request(
+                      "PUT",
+                      response_url,
+                      body=encoded,
+                      headers={"Content-Type": "application/json"},
+                  )
+                  print(f"CFN response sent: {response.status}")
+              except Exception as e:
+                  print(f"Error sending CFN response: {e}")
+
+          def install_helm_cli():
+              """Install Helm CLI in Lambda environment using AWS best practices."""
+              print("Installing Helm CLI...")
+              
+              try:
+                  import subprocess
+                  import tempfile
+                  import os
+                  import stat
+                  import urllib.request
+                  import urllib.error
+                  import tarfile
+                  
+                  # Download and install Helm 3.x (latest stable)
+                  helm_version = "v3.15.4"  # Latest stable as of 2024
+                  helm_url = f"https://get.helm.sh/helm-{helm_version}-linux-amd64.tar.gz"
+                  
+                  # Create temp directory for Helm installation
+                  with tempfile.TemporaryDirectory() as temp_dir:
+                      helm_archive = os.path.join(temp_dir, "helm.tar.gz")
+                      
+                      # Download Helm using Python's urllib instead of curl
+                      print(f"Downloading Helm {helm_version}...")
+                      try:
+                          with urllib.request.urlopen(helm_url) as response:
+                              with open(helm_archive, 'wb') as out_file:
+                                  out_file.write(response.read())
+                          print(f"? Successfully downloaded Helm to {helm_archive}")
+                      except urllib.error.URLError as e:
+                          raise Exception(f"Failed to download Helm: {e}")
+                      
+                      # Extract Helm using Python's tarfile module
+                      print("Extracting Helm...")
+                      try:
+                          with tarfile.open(helm_archive, 'r:gz') as tar:
+                              tar.extractall(path=temp_dir)
+                          print(f"? Successfully extracted Helm to {temp_dir}")
+                      except tarfile.TarError as e:
+                          raise Exception(f"Failed to extract Helm archive: {e}")
+                      except Exception as e:
+                          raise Exception(f"Error during Helm extraction: {e}")
+                      
+                      # Copy Helm binary to Lambda PATH
+                      helm_binary_src = os.path.join(temp_dir, "linux-amd64", "helm")
+                      helm_binary_dst = "/tmp/helm"
+                      
+                      import shutil
+                      shutil.copy2(helm_binary_src, helm_binary_dst)
+                      
+                      # Make executable
+                      os.chmod(helm_binary_dst, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                      
+                      # Update PATH
+                      os.environ["PATH"] = f"/tmp:{os.environ.get('PATH', '')}"
+                      
+                      print("Helm CLI installed successfully")
+                      return "/tmp/helm"
+                      
+              except Exception as e:
+                  print(f"Error installing Helm CLI: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  raise
+
+          def pull_marketplace_chart(region, chart_uri, chart_version, dest_dir="/tmp/charts"):
+              """Pull AWS Marketplace Helm chart using AWS best practices."""
+              print(f"Pulling AWS Marketplace chart: {chart_uri}:{chart_version}")
+              
+              try:
+                  import subprocess
+                  import os
+                  import boto3
+                  import base64
+                  
+                  # AWS Best Practice: Set up environment variables (required for Helm 3.6.3)
+                  env = os.environ.copy()
+                  env["HELM_EXPERIMENTAL_OCI"] = "1"  # Required for your Helm version
+                  env["HELM_REGISTRY_CONFIG"] = "/tmp/.config/helm/registry.json"
+                  env["HELM_REPOSITORY_CONFIG"] = "/tmp/.config/helm/repositories.yaml"
+                  env["HELM_REPOSITORY_CACHE"] = "/tmp/.cache/helm/repository"
+                  
+                  # AWS Best Practice: Create required directories
+                  os.makedirs(dest_dir, exist_ok=True)
+                  os.makedirs("/tmp/.config/helm", exist_ok=True)
+                  os.makedirs("/tmp/.cache/helm/repository", exist_ok=True)
+                  
+                  # AWS Best Practice: Extract registry URL for authentication
+                  registry_url = chart_uri.split('/')[0]
+                  print(f"Authenticating with AWS Marketplace ECR: {registry_url}")
+                  
+                  # AWS Best Practice: Step 1 - Get ECR authentication token using boto3 (12-hour validity)
+                  print("Getting ECR authorization token using boto3...")
+                  try:
+                      ecr_client = boto3.client('ecr', region_name=region)
+                      response = ecr_client.get_authorization_token()
+                      
+                      # Extract the authorization token (base64 encoded)
+                      auth_data = response['authorizationData'][0]
+                      token_data = auth_data['authorizationToken']
+                      
+                      # Decode the token - format is "AWS:password"
+                      decoded_token = base64.b64decode(token_data).decode('utf-8')
+                      username, ecr_password = decoded_token.split(':', 1)
+                      
+                      print(f"? Successfully obtained ECR token for registry")
+                      ecr_token = ecr_password  # Use the password part for Helm login
+                      
+                  except Exception as e:
+                      raise Exception(f"Failed to get ECR authorization token: {e}")
+                  
+                  # AWS Best Practice: Step 2 - Authenticate Helm registry
+                  print(f"Authenticating Helm client to registry: {registry_url}")
+                  login_helm_result = subprocess.run([
+                      "/tmp/helm", "registry", "login", 
+                      "--username", "AWS",
+                      "--password-stdin", registry_url
+                  ], input=ecr_token, text=True, capture_output=True, check=True, env=env)
+                  
+                  print("Helm registry authentication successful")
+                  
+                  # AWS Best Practice: Step 3 - Pull and extract chart using --untar flag
+                  print(f"Pulling and extracting chart: oci://{chart_uri}:{chart_version}")
+                  
+                  pull_result = subprocess.run([
+                      "/tmp/helm", "pull", f"oci://{chart_uri}",
+                      "--version", chart_version,
+                      "--destination", dest_dir,
+                      "--untar"  # AWS recommended: extract directly
+                  ], capture_output=True, text=True, check=True, env=env)
+                  
+                  print("Chart pulled and extracted successfully")
+                  if pull_result.stdout:
+                      print(f"Helm output: {pull_result.stdout}")
+                  
+                  # AWS Best Practice: Step 4 - Verify extraction and find chart directory
+                  print(f"Verifying chart extraction in: {dest_dir}")
+                  extracted_items = os.listdir(dest_dir)
+                  print(f"Extracted items: {extracted_items}")
+                  
+                  # AWS Best Practice: Look for the actual chart directory (prioritize Chart.yaml detection)
+                  chart_directory = None
+                  
+                  # First priority: Look for any directory with Chart.yaml (most reliable method)
+                  for item in extracted_items:
+                      item_path = os.path.join(dest_dir, item)
+                      if os.path.isdir(item_path):
+                          chart_yaml_path = os.path.join(item_path, "Chart.yaml")
+                          if os.path.exists(chart_yaml_path):
+                              print(f"? Found valid chart directory with Chart.yaml: {item_path}")
+                              chart_directory = item_path
+                              break
+                  
+                  # Fallback: Try name-based detection if Chart.yaml method fails
+                  if not chart_directory:
+                      chart_name = chart_uri.split('/')[-1]  # Get chart name from URI
+                      potential_paths = [
+                          os.path.join(dest_dir, chart_name),  # Expected name
+                          os.path.join(dest_dir, chart_name.replace('-', '_')),  # Alternative naming
+                          os.path.join(dest_dir, 'aktus-platform'),  # Known chart name
+                      ]
+                      
+                      for path in potential_paths:
+                          if os.path.exists(path) and os.path.isdir(path):
+                              chart_yaml_path = os.path.join(path, "Chart.yaml")
+                              if os.path.exists(chart_yaml_path):
+                                  print(f"? Found chart directory by name matching: {path}")
+                                  chart_directory = path
+                                  break
+                  
+                  if not chart_directory:
+                      raise Exception(f"Could not find valid chart directory with Chart.yaml in {dest_dir}. Items: {extracted_items}")
+                  
+                  return verify_chart_structure(chart_directory)
+                      
+              except subprocess.CalledProcessError as e:
+                  error_msg = f"Command failed: {' '.join(e.cmd)}"
+                  error_msg += f"\nReturn code: {e.returncode}"
+                  if e.stdout:
+                      error_msg += f"\nStdout: {e.stdout}"
+                  if e.stderr:
+                      error_msg += f"\nStderr: {e.stderr}"
+                  print(error_msg)
+                  raise Exception(f"Helm command failed: {error_msg}")
+              except Exception as e:
+                  print(f"Error pulling marketplace chart: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  raise
+
+          def verify_chart_structure(chart_path):
+              """Verify chart structure and return path if valid."""
+              print(f"Verifying chart structure at: {chart_path}")
+              
+              try:
+                  import os
+                  import yaml
+                  
+                  # Check for required Chart.yaml
+                  chart_yaml_path = os.path.join(chart_path, "Chart.yaml")
+                  if not os.path.exists(chart_yaml_path):
+                      raise Exception(f"Chart.yaml not found at {chart_yaml_path}")
+                  
+                  # Read and validate Chart.yaml
+                  with open(chart_yaml_path, 'r') as f:
+                      chart_metadata = yaml.safe_load(f)
+                  
+                  required_fields = ['name', 'version']
+                  for field in required_fields:
+                      if field not in chart_metadata:
+                          raise Exception(f"Required field '{field}' missing from Chart.yaml")
+                  
+                  print(f"Chart verified: {chart_metadata.get('name')} v{chart_metadata.get('version')}")
+                  print(f"Description: {chart_metadata.get('description', 'No description')}")
+                  
+                  # Check for templates directory
+                  templates_dir = os.path.join(chart_path, "templates")
+                  if os.path.exists(templates_dir):
+                      template_files = [f for f in os.listdir(templates_dir) 
+                                      if f.endswith(('.yaml', '.yml')) and not f.startswith('_')]
+                      print(f"Found {len(template_files)} template files")
+                  else:
+                      print("Warning: No templates directory found")
+                  
+                  # Check for values.yaml
+                  values_path = os.path.join(chart_path, "values.yaml")
+                  if os.path.exists(values_path):
+                      print("Found values.yaml file")
+                  else:
+                      print("Warning: No values.yaml file found")
+                  
+                  return chart_path
+                  
+              except Exception as e:
+                  print(f"Chart verification failed: {e}")
+                  raise Exception(f"Invalid chart structure: {e}")
+
+          def create_kubeconfig_for_helm(cluster_name, region):
+              """Create kubeconfig file for Helm to use the same EKS cluster connection."""
+              try:
+                  import os
+                  import yaml
+                  import tempfile
+                  import base64
+                  import boto3
+                  
+                  print("Creating kubeconfig for Helm...")
+                  
+                  # Get cluster info using the same method as Kubernetes client
+                  eks = boto3.client("eks", region_name=region)
+                  cluster_info = eks.describe_cluster(name=cluster_name)["cluster"]
+                  
+                  # Generate authentication token
+                  token = get_eks_token(cluster_name, region)
+                  if not token:
+                      raise Exception("Failed to generate EKS authentication token for kubeconfig")
+                  
+                  # Create kubeconfig structure
+                  kubeconfig = {
+                      'apiVersion': 'v1',
+                      'kind': 'Config',
+                      'clusters': [{
+                          'name': cluster_name,
+                          'cluster': {
+                              'server': cluster_info["endpoint"],
+                              'certificate-authority-data': cluster_info['certificateAuthority']['data']
+                          }
+                      }],
+                      'contexts': [{
+                          'name': cluster_name,
+                          'context': {
+                              'cluster': cluster_name,
+                              'user': cluster_name
+                          }
+                      }],
+                      'current-context': cluster_name,
+                      'users': [{
+                          'name': cluster_name,
+                          'user': {
+                              'token': token
+                          }
+                      }]
+                  }
+                  
+                  # Write kubeconfig to temp file
+                  kubeconfig_path = '/tmp/kubeconfig'
+                  with open(kubeconfig_path, 'w') as f:
+                      yaml.dump(kubeconfig, f)
+                  
+                  print(f"? Kubeconfig created at: {kubeconfig_path}")
+                  return kubeconfig_path
+                  
+              except Exception as e:
+                  print(f"Error creating kubeconfig: {e}")
+                  raise
+
+          def update_chart_efs_values(chart_path, efs_id):
+              """Update EFS filesystem ID in chart values files, similar to shell script update_efs function."""
+              print(f"Updating EFS ID in chart values: {efs_id}")
+              
+              try:
+                  import os
+                  import yaml
+                  import re
+                  
+                  # Services that need EFS updates (from shell script)
+                  efs_services = [
+                      "aktus-embedding-service",
+                      "aktus-inference-service", 
+                      "aktus-multimodal-data-ingestion-service",
+                      "aktus-research-service"
+                  ]
+                  
+                  charts_dir = os.path.join(chart_path, "charts")
+                  if not os.path.exists(charts_dir):
+                      print(f"Charts directory not found at {charts_dir}")
+                      return
+                  
+                  for service in efs_services:
+                      service_chart_dir = os.path.join(charts_dir, service)
+                      values_file = os.path.join(service_chart_dir, "values.yaml")
+                      
+                      if os.path.exists(values_file):
+                          try:
+                              # Read current values
+                              with open(values_file, 'r') as f:
+                                  content = f.read()
+                              
+                              # Update fileSystemId using regex (similar to shell script sed command)
+                              updated_content = re.sub(
+                                  r'fileSystemId:\s*["\']?[^"\']*["\']?',
+                                  f'fileSystemId: "{efs_id}"',
+                                  content
+                              )
+                              
+                              # Write updated values
+                              with open(values_file, 'w') as f:
+                                  f.write(updated_content)
+                              
+                              print(f"? Updated {service} with EFS ID: {efs_id}")
+                              
+                          except Exception as e:
+                              print(f"Warning: Could not update {service} values.yaml: {e}")
+                      else:
+                          print(f"Warning: values.yaml not found for {service}")
+                  
+              except Exception as e:
+                  print(f"Error updating chart EFS values: {e}")
+                  # Don't fail the entire process for this
+
+          def patch_service_endpoints(api_client, namespace="aktus-ai-platform-dev"):
+              """Patch KDA endpoints similar to shell script patch function."""
+              print("Patching service endpoints...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  import time
+                  
+                  apps_v1 = client.AppsV1Api(api_client)
+                  v1 = client.CoreV1Api(api_client)
+                  
+                  # Get research service endpoint (similar to get_endpoint function in shell script)
+                  research_endpoint = get_service_endpoint(v1, "aktus-research", namespace)
+                  
+                  if research_endpoint and research_endpoint != "Service not found":
+                      print(f"Research service endpoint: {research_endpoint}")
+                      
+                      # Prepare environment variables for KDA service
+                      env_vars = [
+                          client.V1EnvVar(name="VITE_SOCKET_URL", value=f"ws://{research_endpoint.replace('http://', '')}/chat"),
+                          client.V1EnvVar(name="VITE_API_BASE_URL", value=f"{research_endpoint}/db-manager"),
+                          client.V1EnvVar(name="VITE_LEASE_API_BASE_URL", value=research_endpoint),
+                          client.V1EnvVar(name="VITE_API_EMBED_URL", value=f"{research_endpoint}/embeddings")
+                      ]
+                      
+                      # Get deployment and update environment variables
+                      try:
+                          deployment = apps_v1.read_namespaced_deployment(
+                              name="aktus-knowledge-assistant",
+                              namespace=namespace
+                          )
+                          
+                          # Update container environment variables
+                          if deployment.spec.template.spec.containers:
+                              container = deployment.spec.template.spec.containers[0]
+                              if not container.env:
+                                  container.env = []
+                              
+                              # Update or add environment variables
+                              for new_env in env_vars:
+                                  # Remove existing env var with same name
+                                  container.env = [env for env in container.env if env.name != new_env.name]
+                                  # Add new env var
+                                  container.env.append(new_env)
+                          
+                          # Apply the updated deployment
+                          apps_v1.patch_namespaced_deployment(
+                              name="aktus-knowledge-assistant",
+                              namespace=namespace,
+                              body=deployment
+                          )
+                          
+                          print("? Successfully patched KDA deployment endpoints")
+                          
+                      except ApiException as e:
+                          if e.status == 404:
+                              print("Knowledge assistant deployment not found yet, will retry later")
+                          else:
+                              print(f"Error patching deployment: {e}")
+                  else:
+                      print("Research service endpoint not available yet for patching")
+                      
+              except Exception as e:
+                  print(f"Error in endpoint patching: {e}")
+                  # Don't fail the entire process
+
+          def get_service_endpoint(v1_api, service_name, namespace):
+              """Get service endpoint, similar to get_endpoint function in shell script."""
+              try:
+                  service = v1_api.read_namespaced_service(name=service_name, namespace=namespace)
+                  
+                  # Try LoadBalancer first
+                  if service.status.load_balancer and service.status.load_balancer.ingress:
+                      ingress = service.status.load_balancer.ingress[0]
+                      if ingress.hostname:
+                          return f"http://{ingress.hostname}:8080"
+                      elif ingress.ip:
+                          return f"http://{ingress.ip}:8080"
+                  
+                  # Fallback to ClusterIP
+                  if service.spec.cluster_ip:
+                      return f"http://{service.spec.cluster_ip}:8080"
+                  
+                  return "Service not found"
+                  
+              except Exception as e:
+                  print(f"Error getting service endpoint for {service_name}: {e}")
+                  return "Service not found"
+
+          def create_api_key_secrets(api_client, namespace, hf_token=None, openai_key=None):
+              """Create Kubernetes secrets for API keys using Python client (replaces kubectl commands)."""
+              print("Creating API key secrets...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  import base64
+                  
+                  v1 = client.CoreV1Api(api_client)
+                  secrets_created = []
+                  
+                  # Create Hugging Face token secret
+                  if hf_token and hf_token.strip():
+                      print("Creating Hugging Face credentials secret...")
+                      
+                      hf_secret = client.V1Secret(
+                          api_version="v1",
+                          kind="Secret",
+                          metadata=client.V1ObjectMeta(
+                              name="huggingface-credentials",
+                              namespace=namespace
+                          ),
+                          type="Opaque",
+                          data={
+                              "HF_TOKEN": base64.b64encode(hf_token.encode('utf-8')).decode('utf-8')
+                          }
+                      )
+                      
+                      try:
+                          # Try to create the secret
+                          v1.create_namespaced_secret(namespace=namespace, body=hf_secret)
+                          print("? Hugging Face credentials secret created successfully")
+                          secrets_created.append("huggingface-credentials")
+                          
+                      except ApiException as e:
+                          if e.status == 409:  # Already exists
+                              # Update existing secret
+                              v1.patch_namespaced_secret(
+                                  name="huggingface-credentials",
+                                  namespace=namespace,
+                                  body=hf_secret
+                              )
+                              print("? Hugging Face credentials secret updated successfully")
+                              secrets_created.append("huggingface-credentials (updated)")
+                          else:
+                              print(f"Error creating Hugging Face secret: {e}")
+                  else:
+                      print("?? Hugging Face token not provided, skipping secret creation")
+                  
+                  # Create OpenAI API key secret
+                  if openai_key and openai_key.strip():
+                      print("Creating OpenAI API key secret...")
+                      
+                      openai_secret = client.V1Secret(
+                          api_version="v1",
+                          kind="Secret",
+                          metadata=client.V1ObjectMeta(
+                              name="aws-openai-secret",
+                              namespace=namespace
+                          ),
+                          type="Opaque",
+                          data={
+                              "OPENAI_API_KEY": base64.b64encode(openai_key.encode('utf-8')).decode('utf-8')
+                          }
+                      )
+                      
+                      try:
+                          # Try to create the secret
+                          v1.create_namespaced_secret(namespace=namespace, body=openai_secret)
+                          print("? OpenAI API key secret created successfully")
+                          secrets_created.append("aws-openai-secret")
+                          
+                      except ApiException as e:
+                          if e.status == 409:  # Already exists
+                              # Update existing secret
+                              v1.patch_namespaced_secret(
+                                  name="aws-openai-secret",
+                                  namespace=namespace,
+                                  body=openai_secret
+                              )
+                              print("? OpenAI API key secret updated successfully")
+                              secrets_created.append("aws-openai-secret (updated)")
+                          else:
+                              print(f"Error creating OpenAI secret: {e}")
+                  else:
+                      print("?? OpenAI API key not provided, skipping secret creation")
+                  
+                  return secrets_created
+                  
+              except Exception as e:
+                  print(f"Error creating API key secrets: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return []
+
+          def install_helm_chart(chart_path, chart_config, api_client, cluster_name, region, efs_id):
+              """Install Helm chart with namespace and service account creation using Kubernetes API."""
+              try:
+                  import subprocess
+                  import os
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  
+                  # Configuration
+                  namespace = "aktus-ai-platform-dev"
+                  service_account = "aktus-ai-platform-sa"
+                  release_name = "aktus-ai-platform"
+                  
+                  # AWS Best Practice: Create EFS storage class first (from shell script)
+                  print("Step 3.0: Creating EFS StorageClass...")
+                  create_storage_class(api_client, efs_id)
+                  
+                  # Step 3.1: Update chart EFS values (from shell script update_efs function)
+                  print("Step 3.1: Updating chart EFS values...")
+                  update_chart_efs_values(chart_path, efs_id)
+                  
+                  # AWS Best Practice: Create kubeconfig for Helm (required for EKS cluster connection)
+                  print("Step 3.2: Setting up Helm cluster connection...")
+                  kubeconfig_path = create_kubeconfig_for_helm(cluster_name, region)
+                  
+                  # Set environment for Helm
+                  env = os.environ.copy()
+                  env["HELM_EXPERIMENTAL_OCI"] = "1"
+                  env["PATH"] = f"/tmp:{env.get('PATH', '')}"
+                  env["KUBECONFIG"] = kubeconfig_path  # Critical: Tell Helm where to find cluster config
+                  
+                  print(f"Installing chart from: {chart_path}")
+                  print(f"Namespace: {namespace}")
+                  print(f"Service Account: {service_account}")
+                  print(f"Release Name: {release_name}")
+                  
+                  # Step 3.3: Create namespace using Kubernetes API
+                  print("Step 3.3: Creating namespace...")
+                  try:
+                      v1 = client.CoreV1Api(api_client)
+                      
+                      # Check if namespace exists
+                      try:
+                          v1.read_namespace(name=namespace)
+                          print(f"? Namespace '{namespace}' already exists")
+                      except ApiException as e:
+                          if e.status == 404:
+                              # Create namespace
+                              namespace_manifest = client.V1Namespace(
+                                  metadata=client.V1ObjectMeta(name=namespace)
+                              )
+                              v1.create_namespace(body=namespace_manifest)
+                              print(f"? Namespace '{namespace}' created successfully")
+                          else:
+                              raise e
+                  
+                  except Exception as e:
+                      print(f"Warning: Could not create namespace: {e}")
+                      # Continue anyway - namespace might exist
+                  
+                  # Step 3.4: Create service account using Kubernetes API
+                  print("Step 3.4: Creating service account...")
+                  try:
+                      v1 = client.CoreV1Api(api_client)
+                      
+                      # Check if service account exists
+                      try:
+                          v1.read_namespaced_service_account(name=service_account, namespace=namespace)
+                          print(f"? Service account '{service_account}' already exists")
+                      except ApiException as e:
+                          if e.status == 404:
+                              # Create service account
+                              sa_manifest = client.V1ServiceAccount(
+                                  metadata=client.V1ObjectMeta(name=service_account, namespace=namespace)
+                              )
+                              v1.create_namespaced_service_account(namespace=namespace, body=sa_manifest)
+                              print(f"? Service account '{service_account}' created successfully")
+                          else:
+                              raise e
+                  
+                  except Exception as e:
+                      print(f"Warning: Could not create service account: {e}")
+                      # Continue anyway - service account might exist
+                  
+                  # Step 3.5: Install Helm chart
+                  print("Step 3.5: Installing Helm chart...")
+                  try:
+                      # Change to chart directory and install
+                      original_cwd = os.getcwd()
+                      os.chdir(chart_path)
+                      
+                      install_result = subprocess.run([
+                          "/tmp/helm", "install", release_name, ".", 
+                          "--namespace", namespace,
+                          "--create-namespace"  # Ensure namespace exists
+                      ], capture_output=True, text=True, check=True, env=env)
+                      
+                      print(f"? Helm chart '{release_name}' installed successfully!")
+                      if install_result.stdout:
+                          print(f"Helm output:\n{install_result.stdout}")
+                      
+                      # Restore original directory
+                      os.chdir(original_cwd)
+                      
+                  except subprocess.CalledProcessError as e:
+                      os.chdir(original_cwd)  # Restore directory even on error
+                      print(f"? Helm install failed: {e.stderr}")
+                      if e.stdout:
+                          print(f"Helm stdout: {e.stdout}")
+                      raise Exception(f"Helm installation failed: {e.stderr}")
+                  
+                  # Step 3.6: Verify installation
+                  print("Step 3.6: Verifying installation...")
+                  try:
+                      verify_result = subprocess.run([
+                          "/tmp/helm", "status", release_name, "-n", namespace
+                      ], capture_output=True, text=True, check=True, env=env)
+                      
+                      print(f"? Installation verified successfully")
+                      if verify_result.stdout:
+                          print(f"Status: {verify_result.stdout}")
+                  
+                  except subprocess.CalledProcessError as e:
+                      print(f"Warning: Could not verify installation: {e.stderr}")
+                  
+                  # Step 3.7: Create API key secrets (from CloudFormation parameters)
+                  print("Step 3.7: Creating API key secrets...")
+                  hf_token = chart_config.get('hf_token')
+                  openai_key = chart_config.get('openai_key')
+                  create_api_key_secrets(api_client, namespace, hf_token, openai_key)
+                  
+                  # Step 3.8: Wait for services to be ready and patch endpoints (from shell script)
+                  print("Step 3.8: Waiting for services and patching endpoints...")
+                  import time
+                  
+                  # Wait a bit for services to start
+                  time.sleep(30)
+                  
+                  # Retry endpoint patching a few times
+                  for retry in range(3):
+                      try:
+                          patch_service_endpoints(api_client, namespace)
+                          break
+                      except Exception as e:
+                          print(f"Endpoint patching attempt {retry + 1} failed: {e}")
+                          if retry < 2:  # Don't wait on last attempt
+                              time.sleep(30)
+                  
+                  print(f"\n? Successfully installed Aktus AI Platform!")
+                  print(f"   Release: {release_name}")
+                  print(f"   Namespace: {namespace}")
+                  print(f"   Service Account: {service_account}")
+                  print(f"   EFS ID: {efs_id}")
+                  
+                  # Display service endpoints
+                  try:
+                      v1 = client.CoreV1Api(api_client)
+                      research_endpoint = get_service_endpoint(v1, "aktus-research", namespace)
+                      kda_endpoint = get_service_endpoint(v1, "aktus-knowledge-assistant", namespace)
+                      print(f"   Research Service: {research_endpoint}")
+                      print(f"   Knowledge Assistant: {kda_endpoint}")
+                  except Exception as e:
+                      print(f"   Note: Could not retrieve service endpoints: {e}")
+                  
+              except Exception as e:
+                  print(f"? Error installing Helm chart: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  raise
+
+          def install_marketplace_charts(api_client, region, chart_uri, chart_version, chart_namespace, cluster_name, efs_id, hf_token=None, openai_key=None):
+              """Pull and process AWS Marketplace charts using AWS best practices."""
+              print("=== AWS Marketplace Helm Chart Integration ===")
+              print(f"Chart URI: {chart_uri}")
+              print(f"Chart Version: {chart_version}")
+              print(f"Target Namespace: {chart_namespace}")
+              print(f"EFS ID: {efs_id}")
+              
+              try:
+                  # Configuration from CloudFormation parameters
+                  marketplace_charts = [
+                      {
+                          "uri": chart_uri,
+                          "version": chart_version,
+                          "release_name": "aktus-platform",
+                          "namespace": chart_namespace,
+                          "hf_token": hf_token,
+                          "openai_key": openai_key,
+                          "values": {
+                              "replicaCount": 1,
+                              "service.type": "ClusterIP"
+                          }
+                      }
+                  ]
+                  
+                  # AWS Best Practice: Install Helm CLI first using AWS recommended method
+                  print("Step 1: Installing Helm CLI...")
+                  helm_path = install_helm_cli()
+                  print(f"? Helm installed successfully at: {helm_path}")
+                  
+                  # Process each chart using AWS best practices
+                  for chart_config in marketplace_charts:
+                      print(f"\nStep 2: Processing chart: {chart_config['uri']}")
+                      
+                      try:
+                          # AWS Best Practice: Pull and extract chart using official method
+                          print("Step 2a: Pulling chart from AWS Marketplace ECR...")
+                          chart_path = pull_marketplace_chart(
+                              region=region,
+                              chart_uri=chart_config["uri"],
+                              chart_version=chart_config["version"]
+                          )
+                          
+                          print(f"? Chart successfully downloaded and extracted to: {chart_path}")
+                          
+                          # AWS Best Practice: Verify chart contents
+                          print("Step 2b: Analyzing chart contents...")
+                          analyze_chart_contents(chart_path)
+                          
+                          # Step 3: Install the chart with EFS integration
+                          print("Step 3: Installing the Helm chart...")
+                          install_helm_chart(chart_path, chart_config, api_client, cluster_name, region, efs_id)
+                          
+                      except Exception as chart_error:
+                          print(f"? Error processing chart {chart_config['uri']}: {chart_error}")
+                          import traceback
+                          traceback.print_exc()
+                          # Continue with other charts
+                          continue
+                  
+                  print("\n? AWS Marketplace charts processing completed successfully")
+                  
+              except Exception as e:
+                  print(f"? Error in marketplace charts processing: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  # Don't fail the entire Lambda for marketplace chart issues
+                  return
+
+          def analyze_chart_contents(chart_path):
+              """Analyze and log chart contents for debugging."""
+              print(f"Analyzing chart contents at: {chart_path}")
+              
+              try:
+                  import os
+                  import yaml
+                  
+                  # Read Chart.yaml metadata
+                  chart_yaml_path = os.path.join(chart_path, "Chart.yaml")
+                  with open(chart_yaml_path, 'r') as f:
+                      chart_metadata = yaml.safe_load(f)
+                  
+                  print(f"? Chart Analysis:")
+                  print(f"   Name: {chart_metadata.get('name', 'Unknown')}")
+                  print(f"   Version: {chart_metadata.get('version', 'Unknown')}")
+                  print(f"   App Version: {chart_metadata.get('appVersion', 'Not specified')}")
+                  print(f"   Description: {chart_metadata.get('description', 'No description')}")
+                  
+                  # Analyze templates
+                  templates_dir = os.path.join(chart_path, "templates")
+                  if os.path.exists(templates_dir):
+                      template_files = [f for f in os.listdir(templates_dir) 
+                                      if f.endswith(('.yaml', '.yml')) and not f.startswith('_')]
+                      print(f"   Template Files: {len(template_files)}")
+                      for template in template_files[:5]:  # Show first 5
+                          print(f"     - {template}")
+                      if len(template_files) > 5:
+                          print(f"     ... and {len(template_files) - 5} more")
+                  
+                  # Check values.yaml size
+                  values_path = os.path.join(chart_path, "values.yaml")
+                  if os.path.exists(values_path):
+                      values_size = os.path.getsize(values_path)
+                      print(f"   Values.yaml: {values_size} bytes")
+                  
+                  # Check for dependencies
+                  if 'dependencies' in chart_metadata:
+                      deps = chart_metadata['dependencies']
+                      print(f"   Dependencies: {len(deps)}")
+                      for dep in deps:
+                          print(f"     - {dep.get('name')} ({dep.get('version')})")
+                  
+              except Exception as e:
+                  print(f"Warning: Could not analyze chart contents: {e}")
+
+
+
+          def check_efs_csi_driver_status(api_client, cluster_name, region):
+              """Check EFS CSI driver addon status and health."""
+              print("Checking EFS CSI driver status...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  import boto3
+                  
+                  # First check EKS add-on status
+                  eks_client = boto3.client('eks', region_name=region)
+                  
+                  try:
+                      addon_info = eks_client.describe_addon(
+                          clusterName=cluster_name,
+                          addonName='aws-efs-csi-driver'
+                      )
+                      addon_status = addon_info['addon']['status']
+                      addon_health = addon_info['addon'].get('health', {}).get('issues', [])
+                      
+                      print(f"EFS CSI Add-on Status: {addon_status}")
+                      
+                      if addon_health:
+                          print("EFS CSI Add-on Health Issues:")
+                          for issue in addon_health:
+                              print(f"  - {issue.get('code', 'Unknown')}: {issue.get('description', 'No description')}")
+                      
+                      if addon_status != 'ACTIVE':
+                          print(f"?? EFS CSI add-on status is {addon_status}, not ACTIVE")
+                          return False, addon_status
+                          
+                  except Exception as e:
+                      print(f"? Could not check EFS CSI add-on status: {e}")
+                      return False, "UNKNOWN"
+                  
+                  # Then check Kubernetes resources
+                  apps_v1 = client.AppsV1Api(api_client)
+                  
+                  # Check EFS CSI controller deployment
+                  controller_healthy = False
+                  try:
+                      controller = apps_v1.read_namespaced_deployment(
+                          name="efs-csi-controller", 
+                          namespace="kube-system"
+                      )
+                      
+                      ready_replicas = controller.status.ready_replicas or 0
+                      desired_replicas = controller.spec.replicas or 0
+                      
+                      print(f"EFS CSI Controller: {ready_replicas}/{desired_replicas} ready")
+                      
+                      if ready_replicas >= desired_replicas and ready_replicas > 0:
+                          controller_healthy = True
+                      else:
+                          print("?? EFS CSI controller is not fully ready")
+                      
+                  except ApiException as e:
+                      print(f"? Could not find EFS CSI controller: {e}")
+                  
+                  # Check EFS CSI node daemonset
+                  daemonset_healthy = False
+                  try:
+                      daemonset = apps_v1.read_namespaced_daemon_set(
+                          name="efs-csi-node", 
+                          namespace="kube-system"
+                      )
+                      
+                      ready_nodes = daemonset.status.number_ready or 0
+                      desired_nodes = daemonset.status.desired_number_scheduled or 0
+                      
+                      print(f"EFS CSI Node DaemonSet: {ready_nodes}/{desired_nodes} ready")
+                      
+                      if ready_nodes >= desired_nodes and ready_nodes > 0:
+                          daemonset_healthy = True
+                      else:
+                          print("?? EFS CSI node daemonset is not fully ready")
+                      
+                  except ApiException as e:
+                      print(f"? Could not find EFS CSI node daemonset: {e}")
+                  
+                  # Overall health check
+                  overall_healthy = (addon_status == 'ACTIVE' and controller_healthy and daemonset_healthy)
+                  
+                  if overall_healthy:
+                      print("? EFS CSI driver is healthy")
+                      return True, addon_status
+                  else:
+                      print("?? EFS CSI driver has issues")
+                      return False, addon_status
+                  
+              except Exception as e:
+                  print(f"? Error checking EFS CSI driver: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return False, "ERROR"
+
+          def restart_efs_csi_driver(api_client, cluster_name, region):
+              """Restart EFS CSI driver components using multiple approaches."""
+              print("? Restarting EFS CSI driver...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  import boto3
+                  import datetime
+                  import time
+                  
+                  # Method 1: Try to update the EKS add-on (most effective)
+                  print("Method 1: Updating EKS add-on...")
+                  try:
+                      eks_client = boto3.client('eks', region_name=region)
+                      
+                      # Get current add-on info
+                      addon_info = eks_client.describe_addon(
+                          clusterName=cluster_name,
+                          addonName='aws-efs-csi-driver'
+                      )
+                      
+                      current_version = addon_info['addon']['addonVersion']
+                      print(f"Current EFS CSI version: {current_version}")
+                      
+                      # Update the add-on (this forces a restart)
+                      eks_client.update_addon(
+                          clusterName=cluster_name,
+                          addonName='aws-efs-csi-driver',
+                          addonVersion=current_version,  # Same version to force restart
+                          resolveConflicts='OVERWRITE'
+                      )
+                      print("? EKS add-on update initiated")
+                      
+                      # Wait for update to complete
+                      print("Waiting for add-on update to complete...")
+                      waiter = eks_client.get_waiter('addon_active')
+                      waiter.wait(
+                          clusterName=cluster_name,
+                          addonName='aws-efs-csi-driver',
+                          WaiterConfig={'Delay': 15, 'MaxAttempts': 20}
+                      )
+                      print("? EKS add-on update completed")
+                      return True
+                      
+                  except Exception as e:
+                      print(f"?? EKS add-on update failed: {e}")
+                      print("Falling back to Kubernetes-level restart...")
+                  
+                  # Method 2: Force delete pods to trigger restart
+                  print("Method 2: Force deleting EFS CSI pods...")
+                  v1 = client.CoreV1Api(api_client)
+                  
+                  try:
+                      # Delete controller pods
+                      controller_pods = v1.list_namespaced_pod(
+                          namespace="kube-system",
+                          label_selector="app=efs-csi-controller"
+                      )
+                      
+                      for pod in controller_pods.items:
+                          print(f"Deleting controller pod: {pod.metadata.name}")
+                          v1.delete_namespaced_pod(
+                              name=pod.metadata.name,
+                              namespace="kube-system",
+                              grace_period_seconds=0  # Force immediate deletion
+                          )
+                      
+                      print(f"? Deleted {len(controller_pods.items)} controller pods")
+                      
+                  except Exception as e:
+                      print(f"?? Failed to delete controller pods: {e}")
+                  
+                  try:
+                      # Delete node pods
+                      node_pods = v1.list_namespaced_pod(
+                          namespace="kube-system",
+                          label_selector="app=efs-csi-node"
+                      )
+                      
+                      for pod in node_pods.items:
+                          print(f"Deleting node pod: {pod.metadata.name}")
+                          v1.delete_namespaced_pod(
+                              name=pod.metadata.name,
+                              namespace="kube-system",
+                              grace_period_seconds=0  # Force immediate deletion
+                          )
+                      
+                      print(f"? Deleted {len(node_pods.items)} node pods")
+                      
+                  except Exception as e:
+                      print(f"?? Failed to delete node pods: {e}")
+                  
+                  # Method 3: Annotation-based restart as fallback
+                  print("Method 3: Annotation-based restart...")
+                  apps_v1 = client.AppsV1Api(api_client)
+                  restart_time = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                  
+                  try:
+                      # Restart controller deployment
+                      controller = apps_v1.read_namespaced_deployment(
+                          name="efs-csi-controller", 
+                          namespace="kube-system"
+                      )
+                      
+                      if not controller.spec.template.metadata.annotations:
+                          controller.spec.template.metadata.annotations = {}
+                      
+                      controller.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"] = restart_time
+                      
+                      apps_v1.patch_namespaced_deployment(
+                          name="efs-csi-controller",
+                          namespace="kube-system",
+                          body=controller
+                      )
+                      print("? Controller deployment annotation updated")
+                      
+                  except Exception as e:
+                      print(f"?? Failed to restart controller deployment: {e}")
+                  
+                  try:
+                      # Restart node daemonset
+                      daemonset = apps_v1.read_namespaced_daemon_set(
+                          name="efs-csi-node", 
+                          namespace="kube-system"
+                      )
+                      
+                      if not daemonset.spec.template.metadata.annotations:
+                          daemonset.spec.template.metadata.annotations = {}
+                      
+                      daemonset.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"] = restart_time
+                      
+                      apps_v1.patch_namespaced_daemon_set(
+                          name="efs-csi-node",
+                          namespace="kube-system",
+                          body=daemonset
+                      )
+                      print("? Node daemonset annotation updated")
+                      
+                  except Exception as e:
+                      print(f"?? Failed to restart node daemonset: {e}")
+                  
+                  print("? EFS CSI driver restart attempts completed")
+                  print("?? Waiting 30 seconds for restart to propagate...")
+                  time.sleep(30)
+                  
+                  return True
+                  
+              except Exception as e:
+                  print(f"? Error restarting EFS CSI driver: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return False
+
+          def wait_for_efs_csi_recovery(api_client, cluster_name, region, max_retries=3):
+              """Wait for EFS CSI driver to recover with retry logic."""
+              print("Monitoring EFS CSI driver recovery...")
+              
+              for attempt in range(max_retries):
+                  print(f"Recovery attempt {attempt + 1}/{max_retries}")
+                  
+                  # Check status
+                  efs_healthy, efs_status = check_efs_csi_driver_status(api_client, cluster_name, region)
+                  
+                  if efs_healthy:
+                      print(f"? EFS CSI driver recovered successfully (status: {efs_status})")
+                      return True
+                  
+                  if attempt < max_retries - 1:  # Don't restart on last attempt
+                      print(f"?? EFS CSI driver still degraded (status: {efs_status}), retrying restart...")
+                      restart_success = restart_efs_csi_driver(api_client, cluster_name, region)
+                      
+                      if restart_success:
+                          wait_time = 60 * (attempt + 1)  # Exponential backoff: 60s, 120s, 180s
+                          print(f"Waiting {wait_time}s for restart to complete...")
+                          import time
+                          time.sleep(wait_time)
+                      else:
+                          print("? Restart failed, trying next attempt...")
+                  else:
+                      print(f"? EFS CSI driver recovery failed after {max_retries} attempts (final status: {efs_status})")
+              
+              return False
+
+          def wait_for_all_pods_ready(api_client, namespace="aktus-ai-platform-dev", timeout=1800):
+              """Wait for all pods in namespace to be ready."""
+              print(f"? Waiting for all pods in namespace '{namespace}' to be ready...")
+              
+              try:
+                  from kubernetes import client
+                  from kubernetes.client.rest import ApiException
+                  import time
+                  
+                  v1 = client.CoreV1Api(api_client)
+                  start_time = time.time()
+                  
+                  while time.time() - start_time < timeout:
+                      try:
+                          pods = v1.list_namespaced_pod(namespace=namespace)
+                          
+                          if not pods.items:
+                              print(f"?? No pods found in namespace '{namespace}'")
+                              time.sleep(30)
+                              continue
+                          
+                          total_pods = len(pods.items)
+                          ready_pods = 0
+                          pending_pods = []
+                          failed_pods = []
+                          
+                          for pod in pods.items:
+                              pod_name = pod.metadata.name
+                              phase = pod.status.phase
+                              
+                              if phase == "Running":
+                                  # Check if all containers are ready
+                                  if pod.status.container_statuses:
+                                      all_ready = all(cs.ready for cs in pod.status.container_statuses)
+                                      if all_ready:
+                                          ready_pods += 1
+                                      else:
+                                          pending_pods.append(f"{pod_name} (containers not ready)")
+                                  else:
+                                      pending_pods.append(f"{pod_name} (no container status)")
+                              elif phase == "Succeeded":
+                                  ready_pods += 1  # Job/completed pods
+                              elif phase == "Failed":
+                                  failed_pods.append(f"{pod_name} ({phase})")
+                              else:
+                                  pending_pods.append(f"{pod_name} ({phase})")
+                          
+                          print(f"Pod Status: {ready_pods}/{total_pods} ready")
+                          
+                          if pending_pods:
+                              print(f"Pending: {', '.join(pending_pods[:5])}")
+                              if len(pending_pods) > 5:
+                                  print(f"... and {len(pending_pods) - 5} more pending")
+                          
+                          if failed_pods:
+                              print(f"? Failed: {', '.join(failed_pods)}")
+                          
+                          # Check if all pods are ready
+                          if ready_pods == total_pods and not failed_pods:
+                              print(f"? All {total_pods} pods are ready!")
+                              return True
+                          
+                          # Special handling for EFS-related pods
+                          efs_related_pending = [pod for pod in pending_pods if any(svc in pod.lower() for svc in ['embedding', 'inference', 'research', 'multimodal'])]
+                          if efs_related_pending:
+                              print(f"? EFS-dependent pods still pending: {len(efs_related_pending)}")
+                          
+                      except ApiException as e:
+                          print(f"? Error listing pods: {e}")
+                      
+                      print(f"? Waiting 30s before next check... ({int(time.time() - start_time)}s elapsed)")
+                      time.sleep(30)
+                  
+                  print(f"? Timeout waiting for pods to be ready ({timeout}s)")
+                  return False
+                  
+              except Exception as e:
+                  print(f"? Error waiting for pods: {e}")
+                  return False
+
+          def lambda_handler(event, context):
+              print(f"Lambda triggered: {event['RequestType']}")
+              print(f"Event: {json.dumps(event, default=str)}")
+              
+              try:
+                  if event["RequestType"] in ("Create", "Update"):
+                      cluster_name = event["ResourceProperties"]["ClusterName"]
+                      region = event["ResourceProperties"]["Region"]
+                      efs_id = event["ResourceProperties"]["EfsFileSystemId"]
+                      
+                      # Install kubernetes client
+                      print("Installing Kubernetes client...")
+                      if not install_kubernetes_client():
+                          raise Exception("Failed to install kubernetes client")
+                      
+                      # Wait for cluster to be ready
+                      print("Waiting for cluster to be ready...")
+                      if not wait_for_cluster_ready(cluster_name, region):
+                          raise Exception("Cluster did not become ready within timeout")
+                      
+                      # Get cluster info
+                      print("Getting cluster information...")
+                      eks = boto3.client("eks", region_name=region)
+                      cluster = eks.describe_cluster(name=cluster_name)["cluster"]
+                      status = cluster["status"]
+                      message = f"EKS cluster {cluster['name']} status: {status}"
+                      
+                      # Configure Kubernetes client
+                      print("Configuring Kubernetes client...")
+                      k8s_client, api_client = configure_kubernetes_client(cluster["name"], region)
+                      
+                      # EFS security groups are now configured directly in CloudFormation
+                      print("?? EFS security groups configured via CloudFormation (Auto Mode uses cluster SG reference)")
+                      
+                      response_data = {
+                          "Status": "SUCCESS",
+                          "Message": message,
+                          "ClusterName": cluster["name"],
+                          "ClusterStatus": status,
+                          "ClusterEndpoint": cluster["endpoint"],
+                          "ClusterVersion": cluster["version"],
+                          "EfsFileSystemId": efs_id,
+                      }
+                  else:  # Delete
+                      print("Delete operation ? cleaning up resources")
+                      response_data = {"Status": "SUCCESS", "Message": "Delete complete"}
+
+              except Exception as e:
+                  print(f"Error during CFN handling: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  response_data = {"Status": "FAILED", "Message": str(e)}
+
+              # Always send the CFN response first
+              print(f"Sending CloudFormation response: {response_data['Status']}")
+              send_cfn_response(event, context, response_data)
+
+              # Then kick off post-install logic (non-blocking)
+              if event["RequestType"] in ("Create", "Update") and response_data["Status"] == "SUCCESS":
+                  try:
+                      print("Starting post-install configuration...")
+                      
+                      cluster_name = event["ResourceProperties"]["ClusterName"]
+                      region = event["ResourceProperties"]["Region"]
+                      efs_id = event["ResourceProperties"]["EfsFileSystemId"]
+                      
+                      # Configure Kubernetes client again for post-install
+                      print("Configuring Kubernetes client for post-install...")
+                      k8s_client, api_client = configure_kubernetes_client(cluster_name, region)
+                      
+                      # Install components
+                      # Note: Storage class creation and GPU support are now handled within chart installation
+                      print("Adding GPU support...")
+                      add_gpu_support(api_client)
+                      
+                      # AWS Marketplace Helm Chart Integration (if enabled)
+                      enable_marketplace = event.get('ResourceProperties', {}).get('EnableMarketplaceChart', 'false')
+                      print("\n=== AWS Marketplace Integration Check ===")
+                      print(f"EnableMarketplaceChart: {enable_marketplace}")
+                      
+                      if enable_marketplace.lower() == 'true':
+                          chart_uri = event.get('ResourceProperties', {}).get('MarketplaceChartUri', '')
+                          chart_version = event.get('ResourceProperties', {}).get('MarketplaceChartVersion', '')
+                          chart_namespace = event.get('ResourceProperties', {}).get('MarketplaceChartNamespace', 'default')
+                          
+                          print("Chart Configuration:")
+                          print(f"  URI: {chart_uri}")
+                          print(f"  Version: {chart_version}")
+                          print(f"  Namespace: {chart_namespace}")
+                          print(f"  EFS ID: {efs_id}")
+                          
+                          if chart_uri and chart_version:
+                              # Get API keys from CloudFormation parameters
+                              hf_token = event.get('ResourceProperties', {}).get('HuggingFaceToken', '')
+                              openai_key = event.get('ResourceProperties', {}).get('OpenAIAPIKey', '')
+                              
+                              print("? Starting AWS Marketplace Helm chart processing...")
+                              install_marketplace_charts(api_client, region, chart_uri, chart_version, chart_namespace, cluster_name, efs_id, hf_token, openai_key)
+                              
+                              # Add EFS CSI driver monitoring and pod checking after chart installation
+                              print("\n=== Post-Installation Monitoring ===")
+                              
+                              # Check and restart EFS CSI driver if needed with retry logic
+                              print("Step 1: Checking EFS CSI driver health...")
+                              efs_healthy, efs_status = check_efs_csi_driver_status(api_client, cluster_name, region)
+                              
+                              if not efs_healthy:
+                                  print(f"EFS CSI driver appears degraded (status: {efs_status})")
+                                  efs_recovered = wait_for_efs_csi_recovery(api_client, cluster_name, region, max_retries=3)
+                                  
+                                  if efs_recovered:
+                                      print("? EFS CSI driver successfully recovered")
+                                      efs_healthy = True
+                                  else:
+                                      print("? EFS CSI driver recovery failed after multiple attempts")
+                              else:
+                                  print(f"? EFS CSI driver is already healthy (status: {efs_status})")
+                              
+                              # Wait for all pods to be ready
+                              print("Step 2: Monitoring pod readiness...")
+                              pods_ready = wait_for_all_pods_ready(api_client, chart_namespace, timeout=1800)  # 30 minutes
+                              
+                              if pods_ready:
+                                  print("? Deployment successful! All pods are ready.")
+                                  print(f"EFS CSI Driver: {'? Healthy' if efs_healthy else '?? Degraded'}")
+                              else:
+                                  print("?? Some pods may still be starting. Check cluster manually.")
+                                  print(f"EFS CSI Driver: {'? Healthy' if efs_healthy else '?? Degraded'}")
+                              
+                              # Display Nexus Dashboard information
+                              print("\n" + "="*80)
+                              print("? AKTUS AI PLATFORM - NEXUS DASHBOARD READY")
+                              print("="*80)
+                              
+                              try:
+                                  from kubernetes import client
+                                  v1 = client.CoreV1Api(api_client)
+                                  kda_endpoint = get_service_endpoint(v1, "aktus-knowledge-assistant", chart_namespace)
+                                  research_endpoint = get_service_endpoint(v1, "aktus-research", chart_namespace)
+                                  
+                                  if kda_endpoint and kda_endpoint != "Service not found":
+                                      print(f"? Nexus Dashboard: {kda_endpoint}")
+                                      print(f"? Research Service: {research_endpoint}")
+                                      print()
+                                      print("? GET STARTED:")
+                                      print(f"   1. Open your browser to: {kda_endpoint}")
+                                      print("   2. Start exploring the Aktus AI Platform capabilities")
+                                      print("   3. Use the Knowledge Assistant for AI-powered insights")
+                                      print()
+                                      print("? Additional Services:")
+                                      print(f"   ? Research API: {research_endpoint}")
+                                      print(f"   ? Namespace: {chart_namespace}")
+                                      print(f"   ? EFS Storage: {efs_id}")
+                                  else:
+                                      print("?? Nexus Dashboard endpoint not yet available")
+                                      print("   Services may still be initializing. Check back in a few minutes.")
+                                      print(f"   Command: kubectl get svc -n {chart_namespace}")
+                                  
+                                  print()
+                                  print("? Next Steps:")
+                                  print("   ? Monitor pods: kubectl get pods -n aktus-ai-platform-dev")
+                                  print("   ? View logs: kubectl logs -f deployment/aktus-knowledge-assistant -n aktus-ai-platform-dev")
+                                  print("   ? Access services: kubectl port-forward svc/aktus-knowledge-assistant 8080:8080 -n aktus-ai-platform-dev")
+                                  
+                              except Exception as e:
+                                  print(f"?? Could not retrieve Nexus Dashboard endpoint: {e}")
+                                  print("   Use 'kubectl get svc -n aktus-ai-platform-dev' to find service endpoints")
+                              
+                              print("="*80)
+                              
+                          else:
+                              print("? Marketplace chart URI or version not provided")
+                              print("   Skipping chart processing")
+                              print(f"   Missing: URI={bool(chart_uri)}, Version={bool(chart_version)}")
+                      else:
+                          print("?? AWS Marketplace chart integration is disabled")
+                          print("   Set EnableMarketplaceChart=true to enable")
+                      
+                      print("Post-install configuration completed successfully")
+                      
+                  except Exception as e:
+                      print(f"Post-install error (non-blocking): {e}")
+                      import traceback
+                      traceback.print_exc()
+
+              return response_data
+
+  # ===== EKS CLUSTER =====
+  
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !If [EKSClusterNameProvided, !Ref EKSClusterName, !Sub '${VpcPrefix}-${AWS::StackName}-cluster']
+      Version: !Ref EKSVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+      ComputeConfig: !If 
+        - AutoModeEnabled
+        - Enabled: true
+          NodeRoleArn: !GetAtt EKSAutoModeNodeRole.Arn
+          NodePools:
+            - general-purpose
+            - system
+        - !Ref 'AWS::NoValue'
+      KubernetesNetworkConfig: !If 
+        - AutoModeEnabled
+        - ElasticLoadBalancing:
+            Enabled: true
+        - !Ref 'AWS::NoValue'
+      StorageConfig: !If 
+        - AutoModeEnabled
+        - BlockStorage:
+            Enabled: true
+        - !Ref 'AWS::NoValue'
+      AccessConfig:
+        AuthenticationMode: API
+    DependsOn: EKSClusterRole
+
+  # ===== EKS ACCESS ENTRIES =====
+  
+  # Access entries for additional admin users
+  AdminUserAccessEntry1:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminUsers
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:user/${UserName}'
+        - UserName: !Select [0, !Ref AdditionalAdminUsers]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  AdminUserAccessEntry2:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminUsers
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:user/${UserName}'
+        - UserName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminUsers]]]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  # Access entries for additional admin roles
+  AdminRoleAccessEntry1:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminRoles
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+        - RoleName: !Select [0, !Ref AdditionalAdminRoles]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  AdminRoleAccessEntry2:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasAdditionalAdminRoles
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !Sub 
+        - 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
+        - RoleName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminRoles]]]
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  # Lambda role access entry for EKS management
+  LambdaRoleAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      ClusterName: !Ref EKSCluster
+      PrincipalArn: !GetAtt EKSConnectorLambdaRole.Arn
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Condition: AutoModeDisabled
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub '${VpcPrefix}-${AWS::StackName}-nodegroup'
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      AmiType: AL2_x86_64
+      CapacityType: ON_DEMAND
+      DiskSize: !Ref NodeVolumeSize
+      ScalingConfig:
+        MinSize: !Ref NumberOfNodes
+        MaxSize: !Ref NumberOfNodes
+        DesiredSize: !Ref NumberOfNodes
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+    DependsOn: EKSNodeGroupRole
+
+  # ===== EKS ADD-ONS =====
+  
+  # Amazon EFS CSI Driver Add-on
+  EFSCSIDriverAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName: !Ref EKSCluster
+      AddonName: aws-efs-csi-driver
+      AddonVersion: v2.0.9-eksbuild.1  # Latest stable version
+      ResolveConflicts: OVERWRITE
+      ServiceAccountRoleArn: !GetAtt EFSCSIDriverRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs-csi-driver'
+    DependsOn: 
+      - EKSCluster
+      - EKSOIDCProvider
+      - EFSCSIDriverRole
+
+  # OIDC Provider for EKS cluster
+  EKSOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 9e99a48a9960b14926bb7f3b02e22da2b0ab7280  # EKS OIDC root CA thumbprint
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-oidc-provider'
+
+  # IAM Role for EFS CSI Driver
+  EFSCSIDriverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${VpcPrefix}-${AWS::StackName}-efs-csi-driver-role'
+      AssumeRolePolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": "${EKSOIDCProvider}"
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:kube-system:efs-csi-controller-sa",
+                  "${EKSCluster.OpenIdConnectIssuerUrl}:aud": "sts.amazonaws.com"
+                }
+              }
+            }
+          ]
+        }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${VpcPrefix}-${AWS::StackName}-efs-csi-driver-role'
+
+  # Custom Resource to verify EKS cluster status and setup
+  EKSClusterStatus:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt EKSConnectorLambda.Arn
+      ClusterName: !Ref EKSCluster
+      Region: !Ref 'AWS::Region'
+      EfsFileSystemId: !Ref EFSFileSystem
+      # AWS Marketplace Helm Chart Parameters
+      EnableMarketplaceChart: !Ref EnableMarketplaceChart
+      MarketplaceChartUri: !Ref MarketplaceChartUri
+      MarketplaceChartVersion: !Ref MarketplaceChartVersion
+      MarketplaceChartNamespace: !Ref MarketplaceChartNamespace
+      # API Keys Parameters
+      HuggingFaceToken: !If [HasHuggingFaceToken, !Ref HuggingFaceToken, '']
+      OpenAIAPIKey: !If [HasOpenAIAPIKey, !Ref OpenAIAPIKey, '']
+    DependsOn: 
+      - EKSCluster
+      - LambdaRoleAccessEntry
+
+Outputs:
+  # VPC Outputs
+  VPCId:
+    Description: 'VPC ID'
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC-ID'
+
+  PublicSubnets:
+    Description: 'Public subnet IDs'
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PUBLIC-SUBNETS'
+
+  # EKS Outputs
+  EKSClusterName:
+    Description: 'EKS Cluster Name'
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-NAME'
+
+  EKSClusterEndpoint:
+    Description: 'EKS Cluster Endpoint'
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-ENDPOINT'
+
+  EKSClusterArn:
+    Description: 'EKS Cluster ARN'
+    Value: !GetAtt EKSCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-ARN'
+
+  # EFS Outputs
+  EFSFileSystemId:
+    Description: 'EFS File System ID'
+    Value: !Ref EFSFileSystem
+    Export:
+      Name: !Sub '${AWS::StackName}-EFS-ID'
+
+  EFSCSIDriverStatus:
+    Description: 'EFS CSI Driver Add-on Status'
+    Value: 'Installed and Configured'
+    Export:
+      Name: !Sub '${AWS::StackName}-EFS-CSI-DRIVER-STATUS'
+
+  OIDCProviderArn:
+    Description: 'OIDC Provider ARN for IRSA'
+    Value: !Ref EKSOIDCProvider
+    Export:
+      Name: !Sub '${AWS::StackName}-OIDC-PROVIDER-ARN'
+
+  # AWS Marketplace Integration
+  MarketplaceChartStatus:
+    Condition: EnableMarketplaceChartInstallation
+    Description: 'AWS Marketplace Helm chart installation status'
+    Value: !Sub 'Chart ${MarketplaceChartUri}:${MarketplaceChartVersion} configured for installation'
+    Export:
+      Name: !Sub '${AWS::StackName}-MARKETPLACE-CHART-STATUS'
+
+  # Auto Mode Status
+  AutoModeEnabled:
+    Description: 'Whether EKS Auto Mode is enabled'
+    Value: !Ref EnableAutoMode
+    Export:
+      Name: !Sub '${AWS::StackName}-AUTO-MODE-ENABLED'
+
+  # EKS Cluster Status
+  EKSClusterStatus:
+    Description: 'EKS cluster status verification'
+    Value: !GetAtt EKSClusterStatus.Message
+    Export:
+      Name: !Sub '${AWS::StackName}-EKS-CLUSTER-STATUS'
+
+  # API Key Secrets Status
+  APISecretsStatus:
+    Description: 'Status of API key secrets creation'
+    Value: !Sub 
+      - |
+        API key secrets configured for aktus-ai-platform-dev namespace:
+        - Hugging Face Token: ${HFStatus}
+        - OpenAI API Key: ${OpenAIStatus}
+        
+        Secrets available: huggingface-credentials, aws-openai-secret
+        Use these secrets in your pod environment variables.
+      - HFStatus: !If [HasHuggingFaceToken, 'Provided', 'Not provided']
+        OpenAIStatus: !If [HasOpenAIAPIKey, 'Provided', 'Not provided']
+    Export:
+      Name: !Sub '${AWS::StackName}-API-SECRETS-STATUS'
+
+  # Individual secret status outputs
+  HuggingFaceTokenStatus:
+    Description: 'Whether Hugging Face token was provided'
+    Value: !If [HasHuggingFaceToken, 'Provided', 'Not provided']
+    Export:
+      Name: !Sub '${AWS::StackName}-HF-TOKEN-STATUS'
+
+  OpenAIAPIKeyStatus:
+    Description: 'Whether OpenAI API key was provided'
+    Value: !If [HasOpenAIAPIKey, 'Provided', 'Not provided']
+    Export:
+      Name: !Sub '${AWS::StackName}-OPENAI-KEY-STATUS'
+
+  # Connection Instructions
+  ConnectionInstructions:
+    Description: 'How to connect to the EKS cluster'
+    Value: !Sub |
+      To connect to your EKS cluster, run:
+      aws eks update-kubeconfig --region ${AWS::Region} --name ${EKSCluster}
+      
+      Then verify connection:
+      kubectl get nodes
+      
+      View secrets:
+      kubectl get secrets -n aktus-ai-platform-dev
+    Export:
+      Name: !Sub '${AWS::StackName}-CONNECTION-INSTRUCTIONS'
+
+  # Nexus Dashboard Instructions
+  NexusDashboardInstructions:
+    Condition: EnableMarketplaceChartInstallation
+    Description: 'Aktus AI Platform - Nexus Dashboard Access Instructions'
+    Value: !Sub |
+      ? AKTUS AI PLATFORM - NEXUS DASHBOARD READY
+      
+      ? Access your Nexus Dashboard (Knowledge Assistant):
+      kubectl get svc aktus-knowledge-assistant -n ${MarketplaceChartNamespace}
+      
+      ? Quick Start:
+      1. Get service endpoint: kubectl get svc -n ${MarketplaceChartNamespace}
+      2. Port forward (if needed): kubectl port-forward svc/aktus-knowledge-assistant 8080:8080 -n ${MarketplaceChartNamespace}
+      3. Open browser to: http://localhost:8080 (if using port-forward)
+      
+      ? Useful Commands:
+      ? Monitor pods: kubectl get pods -n ${MarketplaceChartNamespace}
+      ? View logs: kubectl logs -f deployment/aktus-knowledge-assistant -n ${MarketplaceChartNamespace}
+      ? Check all services: kubectl get svc -n ${MarketplaceChartNamespace}
+      
+      ? Platform Components:
+      ? Knowledge Assistant (Nexus Dashboard)
+      ? Research Service
+      ? Embedding Service  
+      ? Inference Service
+      ? Multimodal Data Ingestion
+      
+      ? Namespace: ${MarketplaceChartNamespace}
+      ? EFS Storage: ${EFSFileSystem}
+    Export:
+      Name: !Sub '${AWS::StackName}-NEXUS-DASHBOARD-INSTRUCTIONS'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Network Configuration'
+        Parameters:
+          - VpcCIDR
+          - VpcPrefix
+      - Label:
+          default: 'EKS Cluster Configuration'
+        Parameters:
+          - EnableAutoMode
+          - EKSClusterName
+          - EKSVersion
+      - Label:
+          default: 'Node Configuration (Traditional Mode Only)'
+        Parameters:
+          - NodeInstanceType
+          - NumberOfNodes
+          - NodeVolumeSize
+          - KeyPairName
+      - Label:
+          default: 'Access Control Configuration'
+        Parameters:
+          - AdditionalAdminUsers
+          - AdditionalAdminRoles
+      - Label:
+          default: 'API Keys Configuration'
+        Parameters:
+          - HuggingFaceToken
+          - OpenAIAPIKey
+    ParameterLabels:
+      VpcCIDR:
+        default: 'VPC CIDR Block'
+      VpcPrefix:
+        default: 'VPC Resource Name Prefix'
+      EnableAutoMode:
+        default: 'Enable EKS Auto Mode'
+      EKSClusterName:
+        default: 'EKS Cluster Name'
+      EKSVersion:
+        default: 'EKS Version'
+      NodeInstanceType:
+        default: 'Node Instance Type'
+      NumberOfNodes:
+        default: 'Number of Nodes'
+      NodeVolumeSize:
+        default: 'Node Volume Size (GB)'
+      KeyPairName:
+        default: 'EC2 Key Pair (Optional)'
+      AdditionalAdminUsers:
+        default: 'Additional Admin IAM Users'
+      AdditionalAdminRoles:
+        default: 'Additional Admin IAM Roles' 
+      HuggingFaceToken:
+        default: 'Hugging Face API Token'
+      OpenAIAPIKey:
+        default: 'OpenAI API Key' 
