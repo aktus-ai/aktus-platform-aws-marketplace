@@ -96,6 +96,14 @@ Conditions:
     !Not [!Equals [!Join [',', !Ref AdditionalAdminUsers], '']]
   HasAdditionalAdminRoles:
     !Not [!Equals [!Join [',', !Ref AdditionalAdminRoles], '']]
+  HasMultipleAdminUsers:
+    !And
+      - !Not [!Equals [!Join [',', !Ref AdditionalAdminUsers], '']]
+      - !Not [!Equals [!Select [1, !Ref AdditionalAdminUsers], '']]
+  HasMultipleAdminRoles:
+    !And
+      - !Not [!Equals [!Join [',', !Ref AdditionalAdminRoles], '']]
+      - !Not [!Equals [!Select [1, !Ref AdditionalAdminRoles], '']]
 
 Resources:
   # ===== VPC INFRASTRUCTURE =====
@@ -752,12 +760,12 @@ Resources:
 
   AdminUserAccessEntry2:
     Type: AWS::EKS::AccessEntry
-    Condition: HasAdditionalAdminUsers
+    Condition: HasMultipleAdminUsers
     Properties:
       ClusterName: !Ref EKSCluster
       PrincipalArn: !Sub 
         - 'arn:aws:iam::${AWS::AccountId}:user/${UserName}'
-        - UserName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminUsers]]]
+        - UserName: !Select [1, !Ref AdditionalAdminUsers]
       Type: STANDARD
       AccessPolicies:
         - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
@@ -781,12 +789,12 @@ Resources:
 
   AdminRoleAccessEntry2:
     Type: AWS::EKS::AccessEntry
-    Condition: HasAdditionalAdminRoles
+    Condition: HasMultipleAdminRoles
     Properties:
       ClusterName: !Ref EKSCluster
       PrincipalArn: !Sub 
         - 'arn:aws:iam::${AWS::AccountId}:role/${RoleName}'
-        - RoleName: !Select [1, !Split [',', !Join [',', !Ref AdditionalAdminRoles]]]
+        - RoleName: !Select [1, !Ref AdditionalAdminRoles]
       Type: STANDARD
       AccessPolicies:
         - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
