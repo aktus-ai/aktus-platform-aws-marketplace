@@ -1,6 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: "docker"
-    directory: "/"
+  - package-ecosystem: "helm"
+    directory: "/aktus-ai-platform"
     schedule:
       interval: "weekly" 
